@@ -10,6 +10,9 @@ import torch.nn as nn
 from torchvision import transforms, models
 import torch.nn.functional as F
 
+# Import the Google Drive model manager
+from simple_model_manager import SimpleModelManager
+
 # Page configuration
 st.set_page_config(
     page_title="Sentiment Analysis Testing Ground",
@@ -57,48 +60,39 @@ st.markdown(
 )
 
 
+# Initialize the Google Drive model manager
+@st.cache_resource
+def get_model_manager():
+    """Get the Google Drive model manager instance"""
+    try:
+        manager = SimpleModelManager()
+        return manager
+    except Exception as e:
+        st.error(f"Failed to initialize model manager: {e}")
+        return None
+
+
 # Global variables for models
 @st.cache_resource
 def load_vision_model():
-    """Load the pre-trained ResNet-50 vision sentiment model"""
+    """Load the pre-trained ResNet-50 vision sentiment model from Google Drive"""
     try:
-        # Check if model file exists
-        model_path = "models/resnet50_model.pth"
-        if not os.path.exists(model_path):
-            st.error(f"❌ Vision model file not found at: {model_path}")
-            return None
+        manager = get_model_manager()
+        if manager is None:
+            st.error("Model manager not available")
+            return None, None, None
 
-        # Load the model weights first to check the architecture
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        checkpoint = torch.load(model_path, map_location=device)
+        # Load the model using the Google Drive manager
+        model, device, num_classes = manager.load_vision_model()
 
-        # Check the number of classes from the checkpoint
-        if "fc.weight" in checkpoint:
-            num_classes = checkpoint["fc.weight"].shape[0]
-            st.info(f"📊 Model checkpoint has {num_classes} output classes")
-        else:
-            # Fallback: try to infer from the last layer
-            num_classes = 3  # Default assumption
-            st.warning(
-                "⚠️ Could not determine number of classes from checkpoint, assuming 3"
-            )
+        if model is None:
+            st.error("Failed to load vision model from Google Drive")
+            return None, None, None
 
-        # Initialize ResNet-50 model with the correct number of classes
-        # Note: Your model was trained with RGB images, so we keep 3 channels
-        model = models.resnet50(weights=None)  # Don't load ImageNet weights
-
-        num_ftrs = model.fc.in_features
-        model.fc = nn.Linear(num_ftrs, num_classes)  # Use actual number of classes
-
-        # Load trained weights
-        model.load_state_dict(checkpoint)
-        model.to(device)
-        model.eval()
-
-        st.success(f"✅ Vision model loaded successfully with {num_classes} classes!")
+        st.success(f"Vision model loaded successfully with {num_classes} classes!")
         return model, device, num_classes
     except Exception as e:
-        st.error(f"❌ Error loading vision model: {str(e)}")
+        st.error(f"Error loading vision model: {str(e)}")
         return None, None, None
 
 
@@ -154,7 +148,7 @@ def detect_and_preprocess_face(image, crop_tightness=0.05):
         )
 
         if len(faces) == 0:
-            st.warning("⚠️ No face detected in the image. Using center crop instead.")
+            st.warning("No face detected in the image. Using center crop instead.")
             # Fallback: center crop and resize
             if isinstance(image, Image.Image):
                 # Convert to RGB first
@@ -213,7 +207,7 @@ def detect_and_preprocess_face(image, crop_tightness=0.05):
 
     except ImportError:
         st.error(
-            "❌ OpenCV not installed. Please install it with: pip install opencv-python"
+            "OpenCV not installed. Please install it with: pip install opencv-python"
         )
         st.info("Falling back to basic preprocessing...")
         # Fallback: basic grayscale conversion and resize
@@ -226,7 +220,7 @@ def detect_and_preprocess_face(image, crop_tightness=0.05):
             return gray_rgb_pil
         return None
     except Exception as e:
-        st.error(f"❌ Error in face detection: {str(e)}")
+        st.error(f"Error in face detection: {str(e)}")
         st.info("Falling back to basic preprocessing...")
         # Fallback: basic grayscale conversion and resize
         if isinstance(image, Image.Image):
@@ -299,50 +293,39 @@ def predict_text_sentiment(text):
         return sentiment, confidence
 
     except ImportError:
-        st.error(
-            "❌ TextBlob not installed. Please install it with: pip install textblob"
-        )
+        st.error("TextBlob not installed. Please install it with: pip install textblob")
         return "TextBlob not available", 0.0
     except Exception as e:
-        st.error(f"❌ Error in text sentiment analysis: {str(e)}")
+        st.error(f"Error in text sentiment analysis: {str(e)}")
         return "Error occurred", 0.0
 
 
 @st.cache_resource
 def load_audio_model():
-    """Load the pre-trained Wav2Vec2 audio sentiment model"""
+    """Load the pre-trained Wav2Vec2 audio sentiment model from Google Drive"""
     try:
-        # Check if model file exists
-        model_path = "models/wav2vec2_model.pth"
-        if not os.path.exists(model_path):
-            st.error(f"❌ Audio model file not found at: {model_path}")
+        manager = get_model_manager()
+        if manager is None:
+            st.error("Model manager not available")
             return None, None, None, None
 
-        # Load the model weights first to check the architecture
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        checkpoint = torch.load(model_path, map_location=device)
+        # Load the model using the Google Drive manager
+        model, device = manager.load_audio_model()
 
-        # Check the number of classes from the checkpoint
-        if "classifier.weight" in checkpoint:
-            num_classes = checkpoint["classifier.weight"].shape[0]
-            st.info(f"📊 Audio model checkpoint has {num_classes} output classes")
-        else:
-            num_classes = 3  # Default assumption
-            st.warning(
-                "⚠️ Could not determine number of classes from checkpoint, assuming 3"
-            )
+        if model is None:
+            st.error("Failed to load audio model from Google Drive")
+            return None, None, None, None
 
-        # Initialize Wav2Vec2 model with the correct number of classes
-        from transformers import AutoModelForAudioClassification
-
-        model = AutoModelForAudioClassification.from_pretrained(
-            "facebook/wav2vec2-base", num_labels=num_classes
-        )
-
-        # Load trained weights
-        model.load_state_dict(checkpoint)
-        model.to(device)
-        model.eval()
+        # For Wav2Vec2 models, we need to determine the number of classes
+        # This is typically available in the model configuration
+        try:
+            num_classes = model.config.num_labels
+        except:
+            # Fallback: try to infer from the model
+            try:
+                num_classes = model.classifier.out_features
+            except:
+                num_classes = 3  # Default assumption
 
         # Load feature extractor
         from transformers import AutoFeatureExtractor
@@ -351,10 +334,10 @@ def load_audio_model():
             "facebook/wav2vec2-base"
         )
 
-        st.success(f"✅ Audio model loaded successfully with {num_classes} classes!")
+        st.success(f"Audio model loaded successfully with {num_classes} classes!")
         return model, device, num_classes, feature_extractor
     except Exception as e:
-        st.error(f"❌ Error loading audio model: {str(e)}")
+        st.error(f"Error loading audio model: {str(e)}")
         return None, None, None, None
 
 
@@ -430,11 +413,11 @@ def predict_audio_sentiment(audio_bytes):
             os.unlink(tmp_file_path)
 
     except ImportError as e:
-        st.error(f"❌ Required library not installed: {str(e)}")
+        st.error(f"Required library not installed: {str(e)}")
         st.info("Please install: pip install librosa transformers")
         return "Library not available", 0.0
     except Exception as e:
-        st.error(f"❌ Error in audio sentiment prediction: {str(e)}")
+        st.error(f"Error in audio sentiment prediction: {str(e)}")
         return "Error occurred", 0.0
 
 
@@ -457,7 +440,7 @@ def predict_vision_sentiment(image, crop_tightness=0.05):
 
         # Preprocess image to match FER2013 format
         st.info(
-            "🔍 Detecting face and preprocessing image to match training data format..."
+            "Detecting face and preprocessing image to match training data format..."
         )
         preprocessed_image = detect_and_preprocess_face(image, crop_tightness=0.0)
 
@@ -482,7 +465,7 @@ def predict_vision_sentiment(image, crop_tightness=0.05):
             outputs = model(image_tensor)
 
             # Debug: print output shape
-            st.info(f"🔍 Model output shape: {outputs.shape}")
+            st.info(f"Model output shape: {outputs.shape}")
 
             probabilities = F.softmax(outputs, dim=1)
             confidence, predicted = torch.max(probabilities, 1)
@@ -541,23 +524,23 @@ def predict_fused_sentiment(text=None, audio_bytes=None, image=None):
 
 
 # Sidebar navigation
-st.sidebar.title("🧠 Sentiment Analysis")
+st.sidebar.title("Sentiment Analysis")
 st.sidebar.markdown("---")
 
 # Navigation
 page = st.sidebar.selectbox(
     "Choose a page:",
     [
-        "🏠 Home",
-        "📝 Text Sentiment",
-        "🎵 Audio Sentiment",
-        "🖼️ Vision Sentiment",
-        "🔗 Fused Model",
+        "Home",
+        "Text Sentiment",
+        "Audio Sentiment",
+        "Vision Sentiment",
+        "Fused Model",
     ],
 )
 
 # Home Page
-if page == "🏠 Home":
+if page == "Home":
     st.markdown(
         '<h1 class="main-header">Sentiment Analysis Testing Ground</h1>',
         unsafe_allow_html=True,
@@ -579,8 +562,8 @@ if page == "🏠 Home":
         st.markdown(
             """
         <div class="model-card">
-            <h3>📝 Text Sentiment Model</h3>
-            <p>✅ <strong>READY TO USE</strong> - Analyze sentiment from text input using TextBlob</p>
+            <h3>Text Sentiment Model</h3>
+            <p>READY TO USE - Analyze sentiment from text input using TextBlob</p>
                          <ul>
                  <li>Process any text input</li>
                  <li>Get sentiment classification (Positive/Negative/Neutral)</li>
@@ -596,12 +579,12 @@ if page == "🏠 Home":
         st.markdown(
             """
         <div class="model-card">
-            <h3>🎵 Audio Sentiment Model</h3>
-            <p>✅ <strong>READY TO USE</strong> - Analyze sentiment from audio files using fine-tuned Wav2Vec2</p>
+            <h3>Audio Sentiment Model</h3>
+            <p>READY TO USE - Analyze sentiment from audio files using fine-tuned Wav2Vec2</p>
                          <ul>
                  <li>Upload audio files (.wav, .mp3, .m4a, .flac)</li>
-                 <li>🎙️ Record audio directly with microphone (max 5s)</li>
-                 <li>🔄 Automatic preprocessing: 16kHz sampling, 5s max duration (CREMA-D + RAVDESS format)</li>
+                 <li>Record audio directly with microphone (max 5s)</li>
+                 <li>Automatic preprocessing: 16kHz sampling, 5s max duration (CREMA-D + RAVDESS format)</li>
                  <li>Listen to uploaded/recorded audio</li>
                  <li>Get sentiment predictions</li>
                  <li>Real-time audio analysis</li>
@@ -615,14 +598,14 @@ if page == "🏠 Home":
         st.markdown(
             """
         <div class="model-card">
-            <h3>🖼️ Vision Sentiment Model</h3>
+            <h3>Vision Sentiment Model</h3>
             <p>Analyze sentiment from images using fine-tuned ResNet-50</p>
                          <ul>
                  <li>Upload image files (.png, .jpg, .jpeg, .bmp, .tiff)</li>
-                 <li>🔄 Automatic face detection & preprocessing</li>
-                 <li>🎯 Fixed 0% padding for tightest face crop</li>
-                 <li>📏 Convert to 224x224 grayscale → 3-channel RGB (FER2013 format)</li>
-                 <li>🎯 Transforms: Resize(224) → CenterCrop(224) → ImageNet Normalization</li>
+                 <li>Automatic face detection & preprocessing</li>
+                 <li>Fixed 0% padding for tightest face crop</li>
+                 <li>Convert to 224x224 grayscale → 3-channel RGB (FER2013 format)</li>
+                 <li>Transforms: Resize(224) → CenterCrop(224) → ImageNet Normalization</li>
                  <li>Preview original & preprocessed images</li>
                  <li>Get sentiment predictions</li>
              </ul>
@@ -634,7 +617,7 @@ if page == "🏠 Home":
     st.markdown(
         """
     <div class="model-card">
-        <h3>🔗 Fused Model</h3>
+        <h3>Fused Model</h3>
         <p>Combine predictions from all three models for enhanced accuracy</p>
         <ul>
             <li>Multi-modal input processing</li>
@@ -650,16 +633,17 @@ if page == "🏠 Home":
     st.markdown(
         """
     <div style="text-align: center; color: #666;">
-        <p><strong>Note:</strong> This application now has <strong>ALL THREE MODELS</strong> fully integrated and ready to use! 🎉</p>
+        <p><strong>Note:</strong> This application now has <strong>ALL THREE MODELS</strong> fully integrated and ready to use!</p>
         <p><strong>TextBlob</strong> (Text) + <strong>Wav2Vec2</strong> (Audio) + <strong>ResNet-50</strong> (Vision)</p>
+        <p><strong>Models are now loaded from Google Drive automatically!</strong></p>
     </div>
     """,
         unsafe_allow_html=True,
     )
 
 # Text Sentiment Page
-elif page == "📝 Text Sentiment":
-    st.title("📝 Text Sentiment Analysis")
+elif page == "Text Sentiment":
+    st.title("Text Sentiment Analysis")
     st.markdown("Analyze the sentiment of your text using our TextBlob-based model.")
 
     # Text input
@@ -670,7 +654,7 @@ elif page == "📝 Text Sentiment":
     )
 
     # Analyze button
-    if st.button("🔍 Analyze Sentiment", type="primary", use_container_width=True):
+    if st.button("Analyze Sentiment", type="primary", use_container_width=True):
         if text_input and text_input.strip():
             with st.spinner("Analyzing text sentiment..."):
                 sentiment, confidence = predict_text_sentiment(text_input)
@@ -707,37 +691,41 @@ elif page == "📝 Text Sentiment":
             st.error("Please enter some text to analyze.")
 
 # Audio Sentiment Page
-elif page == "🎵 Audio Sentiment":
-    st.title("🎵 Audio Sentiment Analysis")
+elif page == "Audio Sentiment":
+    st.title("Audio Sentiment Analysis")
     st.markdown(
         "Analyze the sentiment of your audio files using our fine-tuned Wav2Vec2 model."
     )
 
     # Preprocessing information
     st.info(
-        "ℹ️ **Audio Preprocessing**: Audio will be automatically processed to match CREMA-D + RAVDESS training format: "
+        "**Audio Preprocessing**: Audio will be automatically processed to match CREMA-D + RAVDESS training format: "
         "16kHz sampling rate, max 5 seconds, with automatic resampling and feature extraction."
     )
 
     # Model status
     model, device, num_classes, feature_extractor = load_audio_model()
     if model is None:
-        st.error("❌ Audio model could not be loaded. Please check the model file.")
-        st.info("Expected model file: `models/wav2vec2_model.pth`")
+        st.error(
+            "Audio model could not be loaded. Please check the Google Drive setup."
+        )
+        st.info(
+            "Expected: Models should be configured in Google Drive and accessible via the model manager."
+        )
     else:
         st.success(
-            f"✅ Audio model loaded successfully on {device} with {num_classes} classes!"
+            f"Audio model loaded successfully on {device} with {num_classes} classes!"
         )
 
     # Input method selection
-    st.subheader("🎤 Choose Input Method")
+    st.subheader("Choose Input Method")
     input_method = st.radio(
         "Select how you want to provide audio:",
-        ["📁 Upload Audio File", "🎙️ Record Audio"],
+        ["Upload Audio File", "Record Audio"],
         horizontal=True,
     )
 
-    if input_method == "📁 Upload Audio File":
+    if input_method == "Upload Audio File":
         # File uploader
         uploaded_audio = st.file_uploader(
             "Choose an audio file",
@@ -752,7 +740,7 @@ elif page == "🎵 Audio Sentiment":
         st.markdown(
             """
         <div class="model-card">
-            <h3>🎙️ Audio Recording</h3>
+            <h3>Audio Recording</h3>
             <p>Record audio directly with your microphone (max 5 seconds).</p>
             <p><strong>Note:</strong> Make sure your microphone is accessible and you have permission to use it.</p>
         </div>
@@ -769,7 +757,7 @@ elif page == "🎵 Audio Sentiment":
         if recorded_audio is not None:
             # Display recorded audio
             st.audio(recorded_audio, format="audio/wav")
-            st.success("✅ Audio recorded successfully!")
+            st.success("Audio recorded successfully!")
 
             # Convert recorded audio to bytes for processing
             uploaded_audio = recorded_audio
@@ -784,21 +772,21 @@ elif page == "🎵 Audio Sentiment":
         # Display audio player
         if audio_source == "recorded":
             st.audio(uploaded_audio, format="audio/wav")
-            st.info(f"🎙️ {audio_name} | Source: Microphone Recording")
+            st.info(f"{audio_name} | Source: Microphone Recording")
         else:
             st.audio(
                 uploaded_audio, format=f'audio/{uploaded_audio.name.split(".")[-1]}'
             )
             # File info for uploaded files
             file_size = len(uploaded_audio.getvalue()) / 1024  # KB
-            st.info(f"📁 File: {uploaded_audio.name} | Size: {file_size:.1f} KB")
+            st.info(f"File: {uploaded_audio.name} | Size: {file_size:.1f} KB")
 
         # Analyze button
         if st.button(
-            "🔍 Analyze Audio Sentiment", type="primary", use_container_width=True
+            "Analyze Audio Sentiment", type="primary", use_container_width=True
         ):
             if model is None:
-                st.error("❌ Model not loaded. Cannot analyze audio.")
+                st.error("Model not loaded. Cannot analyze audio.")
             else:
                 with st.spinner("Analyzing audio sentiment..."):
                     audio_bytes = uploaded_audio.getvalue()
@@ -828,46 +816,48 @@ elif page == "🎵 Audio Sentiment":
                     unsafe_allow_html=True,
                 )
     else:
-        if input_method == "📁 Upload Audio File":
-            st.info("👆 Please upload an audio file to begin analysis.")
+        if input_method == "Upload Audio File":
+            st.info("Please upload an audio file to begin analysis.")
         else:
-            st.info("🎙️ Click the microphone button above to record audio for analysis.")
+            st.info("Click the microphone button above to record audio for analysis.")
 
 # Vision Sentiment Page
-elif page == "🖼️ Vision Sentiment":
-    st.title("🖼️ Vision Sentiment Analysis")
+elif page == "Vision Sentiment":
+    st.title("Vision Sentiment Analysis")
     st.markdown(
         "Analyze the sentiment of your images using our fine-tuned ResNet-50 model."
     )
 
     st.info(
-        "ℹ️ **Note**: Images will be automatically preprocessed to match FER2013 format: face detection, grayscale conversion, and 224x224 resize (converted to 3-channel RGB)."
+        "**Note**: Images will be automatically preprocessed to match FER2013 format: face detection, grayscale conversion, and 224x224 resize (converted to 3-channel RGB)."
     )
 
     # Face cropping is set to 0% (no padding) for tightest crop
-    st.info(
-        "🎯 **Face Cropping**: Set to 0% padding for tightest crop on facial features"
-    )
+    st.info("**Face Cropping**: Set to 0% padding for tightest crop on facial features")
 
     # Model status
     model, device, num_classes = load_vision_model()
     if model is None:
-        st.error("❌ Vision model could not be loaded. Please check the model file.")
-        st.info("Expected model file: `models/resnet50_model.pth`")
+        st.error(
+            "Vision model could not be loaded. Please check the Google Drive setup."
+        )
+        st.info(
+            "Expected: Models should be configured in Google Drive and accessible via the model manager."
+        )
     else:
         st.success(
-            f"✅ Vision model loaded successfully on {device} with {num_classes} classes!"
+            f"Vision model loaded successfully on {device} with {num_classes} classes!"
         )
 
     # Input method selection
-    st.subheader("📸 Choose Input Method")
+    st.subheader("Choose Input Method")
     input_method = st.radio(
         "Select how you want to provide an image:",
-        ["📁 Upload Image File", "📷 Take Photo with Camera"],
+        ["Upload Image File", "Take Photo with Camera"],
         horizontal=True,
     )
 
-    if input_method == "📁 Upload Image File":
+    if input_method == "Upload Image File":
         # File uploader
         uploaded_image = st.file_uploader(
             "Choose an image file",
@@ -887,15 +877,15 @@ elif page == "🖼️ Vision Sentiment":
             # File info
             file_size = len(uploaded_image.getvalue()) / 1024  # KB
             st.info(
-                f"📁 File: {uploaded_image.name} | Size: {file_size:.1f} KB | Dimensions: {image.size[0]}x{image.size[1]}"
+                f"File: {uploaded_image.name} | Size: {file_size:.1f} KB | Dimensions: {image.size[0]}x{image.size[1]}"
             )
 
             # Analyze button
             if st.button(
-                "🔍 Analyze Image Sentiment", type="primary", use_container_width=True
+                "Analyze Image Sentiment", type="primary", use_container_width=True
             ):
                 if model is None:
-                    st.error("❌ Model not loaded. Cannot analyze image.")
+                    st.error("Model not loaded. Cannot analyze image.")
                 else:
                     with st.spinner("Analyzing image sentiment..."):
                         sentiment, confidence = predict_vision_sentiment(image)
@@ -932,7 +922,7 @@ elif page == "🖼️ Vision Sentiment":
         st.markdown(
             """
         <div class="model-card">
-            <h3>📷 Camera Capture</h3>
+            <h3>Camera Capture</h3>
             <p>Take a photo directly with your camera to analyze its sentiment.</p>
             <p><strong>Note:</strong> Make sure your camera is accessible and you have permission to use it.</p>
         </div>
@@ -957,15 +947,15 @@ elif page == "🖼️ Vision Sentiment":
 
             # Image info
             st.info(
-                f"📷 Captured Photo | Dimensions: {image.size[0]}x{image.size[1]} | Format: {image.format}"
+                f"Captured Photo | Dimensions: {image.size[0]}x{image.size[1]} | Format: {image.format}"
             )
 
             # Analyze button
             if st.button(
-                "🔍 Analyze Photo Sentiment", type="primary", use_container_width=True
+                "Analyze Photo Sentiment", type="primary", use_container_width=True
             ):
                 if model is None:
-                    st.error("❌ Model not loaded. Cannot analyze image.")
+                    st.error("Model not loaded. Cannot analyze image.")
                 else:
                     with st.spinner("Analyzing photo sentiment..."):
                         sentiment, confidence = predict_vision_sentiment(image)
@@ -999,14 +989,14 @@ elif page == "🖼️ Vision Sentiment":
                         )
 
     # Show info if no image is provided
-    if input_method == "📁 Upload Image File" and "uploaded_image" not in locals():
-        st.info("👆 Please upload an image file to begin analysis.")
-    elif input_method == "📷 Take Photo with Camera" and "camera_photo" not in locals():
-        st.info("📷 Click the camera button above to take a photo for analysis.")
+    if input_method == "Upload Image File" and "uploaded_image" not in locals():
+        st.info("Please upload an image file to begin analysis.")
+    elif input_method == "Take Photo with Camera" and "camera_photo" not in locals():
+        st.info("Click the camera button above to take a photo for analysis.")
 
 # Fused Model Page
-elif page == "🔗 Fused Model":
-    st.title("🔗 Fused Model Analysis")
+elif page == "Fused Model":
+    st.title("Fused Model Analysis")
     st.markdown(
         "Combine predictions from all three models for enhanced sentiment analysis."
     )
@@ -1026,30 +1016,30 @@ elif page == "🔗 Fused Model":
     col1, col2 = st.columns(2)
 
     with col1:
-        st.subheader("📝 Text Input")
+        st.subheader("Text Input")
         text_input = st.text_area(
             "Enter text (optional):",
             height=100,
             placeholder="Type or paste your text here...",
         )
 
-        st.subheader("🎵 Audio Input")
+        st.subheader("Audio Input")
 
         # Audio preprocessing information for fused model
         st.info(
-            "ℹ️ **Audio Preprocessing**: Audio will be automatically processed to match CREMA-D + RAVDESS training format: "
+            "**Audio Preprocessing**: Audio will be automatically processed to match CREMA-D + RAVDESS training format: "
             "16kHz sampling rate, max 5 seconds, with automatic resampling and feature extraction."
         )
 
         # Audio input method for fused model
         audio_input_method = st.radio(
             "Audio input method:",
-            ["📁 Upload File", "🎙️ Record Audio"],
+            ["Upload File", "Record Audio"],
             key="fused_audio_method",
             horizontal=True,
         )
 
-        if audio_input_method == "📁 Upload File":
+        if audio_input_method == "Upload File":
             uploaded_audio = st.file_uploader(
                 "Upload audio file (optional):",
                 type=["wav", "mp3", "m4a", "flac"],
@@ -1067,7 +1057,7 @@ elif page == "🔗 Fused Model":
 
             if recorded_audio is not None:
                 st.audio(recorded_audio, format="audio/wav")
-                st.success("✅ Audio recorded successfully!")
+                st.success("Audio recorded successfully!")
                 uploaded_audio = recorded_audio
                 audio_source = "recorded"
                 audio_name = "Recorded Audio"
@@ -1077,22 +1067,22 @@ elif page == "🔗 Fused Model":
                 audio_name = None
 
     with col2:
-        st.subheader("🖼️ Image Input")
+        st.subheader("Image Input")
 
         # Face cropping is set to 0% (no padding) for tightest crop
         st.info(
-            "🎯 **Face Cropping**: Set to 0% padding for tightest crop on facial features"
+            "**Face Cropping**: Set to 0% padding for tightest crop on facial features"
         )
 
         # Image input method for fused model
         image_input_method = st.radio(
             "Image input method:",
-            ["📁 Upload File", "📷 Take Photo"],
+            ["Upload File", "Take Photo"],
             key="fused_image_method",
             horizontal=True,
         )
 
-        if image_input_method == "📁 Upload File":
+        if image_input_method == "Upload File":
             uploaded_image = st.file_uploader(
                 "Upload image file (optional):",
                 type=["png", "jpg", "jpeg", "bmp", "tiff"],
@@ -1122,7 +1112,7 @@ elif page == "🔗 Fused Model":
             )
 
     # Analyze button
-    if st.button("🔍 Run Fused Analysis", type="primary", use_container_width=True):
+    if st.button("Run Fused Analysis", type="primary", use_container_width=True):
         if text_input or uploaded_audio or uploaded_image:
             with st.spinner("Running fused sentiment analysis..."):
                 # Prepare inputs
@@ -1154,7 +1144,7 @@ elif page == "🔗 Fused Model":
                     text_sentiment, text_conf = predict_text_sentiment(text_input)
                     results_data.append(
                         {
-                            "Model": "Text (TextBlob) ✅",
+                            "Model": "Text (TextBlob)",
                             "Input": f"Text: {text_input[:50]}...",
                             "Sentiment": text_sentiment,
                             "Confidence": f"{text_conf:.2f}",
@@ -1165,7 +1155,7 @@ elif page == "🔗 Fused Model":
                     audio_sentiment, audio_conf = predict_audio_sentiment(audio_bytes)
                     results_data.append(
                         {
-                            "Model": "Audio (Wav2Vec2) ✅",
+                            "Model": "Audio (Wav2Vec2)",
                             "Input": f"Audio: {audio_name}",
                             "Sentiment": audio_sentiment,
                             "Confidence": f"{audio_conf:.2f}",
@@ -1205,7 +1195,7 @@ elif page == "🔗 Fused Model":
                 )
         else:
             st.warning(
-                "⚠️ Please provide at least one input (text, audio, or image) for fused analysis."
+                "Please provide at least one input (text, audio, or image) for fused analysis."
             )
 
 # Footer

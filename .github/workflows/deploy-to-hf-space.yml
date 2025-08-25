@@ -12,7 +12,7 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Push to Hugging Face Space
-        uses: huggingface/huggingface_hub@main
+        uses: huggingface/huggingface-hub@main
         with:
           # Your Hugging Face Space repo ID
           repo-type: space
@@ -21,6 +21,9 @@ jobs:
           # The secret token you added to GitHub
           hf_token: ${{ secrets.HF_TOKEN }}
           # Optional: specify the branch of your Space to update
-          # branch: main
+          branch: main
           # Optional: force push (overwrites history on Space, use with caution)
-          # force: true
+          force: true
+          # What to push: the files that were just checked out
+          git-user-name: "GitHub Action Bot"
+          git-user-email: "github-actions@github.com"

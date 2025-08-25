@@ -1,8 +1,3 @@
-#!/usr/bin/env python3
-"""
-Simple Model Manager - Downloads models from Google Drive using gdown
-"""
-
 import os
 import gdown
 from pathlib import Path
@@ -11,22 +6,9 @@ from typing import Tuple, Any
 import torch
 import torch.nn as nn
 from torchvision import models
+from dotenv import load_dotenv
 
-# Try to load .env file if it exists
-try:
-    from dotenv import load_dotenv
-
-    load_dotenv()
-except ImportError:
-    # If python-dotenv is not installed, try to load .env manually
-    env_file = Path(".env")
-    if env_file.exists():
-        with open(env_file, "r") as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, value = line.split("=", 1)
-                    os.environ[key.strip()] = value.strip()
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

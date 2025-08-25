@@ -1,0 +1,113 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env
+pip-log.txt
+pip-delete-this-directory.txt
+.tox
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.git
+.mypy_cache
+.pytest_cache
+.hypothesis
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Environment variables
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Docker
+Dockerfile
+.dockerignore
+docker-compose.yml
+docker-compose.yaml
+
+# Documentation
+README*.md
+DEPLOYMENT_GUIDE.md
+*.md
+
+# Deployment scripts
+deploy_to_spaces.py
+app_spaces.py
+requirements_spaces.txt
+README_spaces.md
+
+# Large files that shouldn't be in container
+*.pth
+*.bin
+*.safetensors
+*.ckpt
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+*.joblib
+*.model
+*.weights
+*.pt
+*.onnx
+*.tflite
+*.pb
+*.savedmodel
+*.mar
+*.mlmodel
+*.mlpackage
+*.mlflow
+*.bundle
+
+# Archives
+*.zip
+*.tar.gz
+*.rar
+*.7z
+*.gz
+*.bz2
+*.xz
+*.lzma
+*.zst
+*.lz4
+*.br
+
+# Temporary files
+*.tmp
+*.temp
+temp/
+tmp/

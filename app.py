@@ -15,7 +15,7 @@ from simple_model_manager import SimpleModelManager
 
 # Page configuration
 st.set_page_config(
-    page_title="Sentiment Analysis Testing Ground",
+    page_title="Multimodal Sentiment Analysis",
     page_icon="🧠",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -542,7 +542,7 @@ page = st.sidebar.selectbox(
 # Home Page
 if page == "Home":
     st.markdown(
-        '<h1 class="main-header">Sentiment Analysis Testing Ground</h1>',
+        '<h1 class="main-header">Multimodal Sentiment Analysis</h1>',
         unsafe_allow_html=True,
     )
 

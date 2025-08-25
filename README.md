@@ -1,5 +1,5 @@
 ---
-title: Sentiment Analysis Testing Ground
+title: Multimodal Sentiment Analysis
 emoji: 🧠
 colorFrom: blue
 colorTo: purple
@@ -9,7 +9,7 @@ app_file: app.py
 pinned: false
 ---
 
-# Sentiment Analysis Testing Ground
+# Multimodal Sentiment Analysis
 
 A comprehensive multi-page Streamlit application for testing three independent sentiment analysis models: text, audio, and vision-based sentiment analysis.
 

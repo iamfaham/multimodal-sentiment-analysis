@@ -12,29 +12,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
         with:
           fetch-depth: 0
           lfs: true
 
-      - name: Check large files
-        uses: ActionsDesk/lfs-warning@v2.0
-        with:
-          filesizelimit: 10485760 # 10MB limit for HF Spaces
-
-      - name: Push to Hugging Face Space
-        uses: huggingface/huggingface-hub@main
-        with:
-          # Your Hugging Face Space repo ID
-          repo-type: space
-          # Format: {your_username}/{your_space_name}
-          repo-id: "${{ secrets.HF_USERNAME }}/${{ secrets.SPACE_NAME }}"
-          # The secret token you added to GitHub
-          hf_token: ${{ secrets.HF_TOKEN }}
-          # Optional: specify the branch of your Space to update
-          branch: main
-          # Optional: force push (overwrites history on Space, use with caution)
-          force: true
-          # What to push: the files that were just checked out
-          git-user-name: "GitHub Action Bot"
-          git-user-email: "github-actions@github.com"
+      # - name: Check large files
+      #   uses: ActionsDesk/lfs-warning@v2.0
+      #   with:
+      #     filesizelimit: 10485760 # 10MB limit for HF Spaces
+      - name: Push to hub
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: git push https://HF_USERNAME:$HF_TOKEN@huggingface.co/spaces/HF_USERNAME/SPACE_NAME main

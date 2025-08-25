@@ -52,10 +52,10 @@ class SimpleModelManager:
         missing_vars = []
 
         if not self.model_links["vision"]["url"]:
-            missing_vars.append("VISION_MODEL_DRIVE_LINK")
+            missing_vars.append("VISION_MODEL_DRIVE_ID")
 
         if not self.model_links["audio"]["url"]:
-            missing_vars.append("AUDIO_MODEL_DRIVE_LINK")
+            missing_vars.append("AUDIO_MODEL_DRIVE_ID")
 
         if missing_vars:
             logger.warning(f"Missing environment variables: {', '.join(missing_vars)}")
@@ -116,7 +116,7 @@ class SimpleModelManager:
 
             # Check if URL is configured
             if not model_info["url"]:
-                raise ValueError("VISION_MODEL_DRIVE_LINK environment variable not set")
+                raise ValueError("VISION_MODEL_DRIVE_ID environment variable not set")
 
             model_path = self.download_from_google_drive(
                 model_info["url"], model_info["filename"]
@@ -205,7 +205,7 @@ class SimpleModelManager:
 
             # Check if URL is configured
             if not model_info["url"]:
-                raise ValueError("AUDIO_MODEL_DRIVE_LINK environment variable not set")
+                raise ValueError("AUDIO_MODEL_DRIVE_ID environment variable not set")
 
             model_path = self.download_from_google_drive(
                 model_info["url"], model_info["filename"]
@@ -312,9 +312,9 @@ class SimpleModelManager:
 
         # Update environment variables if provided
         if vision_url:
-            os.environ["VISION_MODEL_DRIVE_LINK"] = vision_url
+            os.environ["VISION_MODEL_DRIVE_ID"] = vision_url
         if audio_url:
-            os.environ["AUDIO_MODEL_DRIVE_LINK"] = audio_url
+            os.environ["AUDIO_MODEL_DRIVE_ID"] = audio_url
 
         logger.info("Model links updated!")
 
@@ -376,8 +376,8 @@ if __name__ == "__main__":
         else:
             print("\n⚠️  Some models are not configured")
             print("Please set the following environment variables:")
-            print("  VISION_MODEL_DRIVE_LINK")
-            print("  AUDIO_MODEL_DRIVE_LINK")
+            print("  VISION_MODEL_DRIVE_ID")
+            print("  AUDIO_MODEL_DRIVE_ID")
 
     except Exception as e:
         print(f"Error loading models: {e}")

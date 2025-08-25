@@ -1,0 +1,115 @@
+name: Deploy to Hugging Face Space
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Test application
+      run: |
+        python -c "import streamlit; print('Streamlit version:', streamlit.__version__)"
+        python -c "import torch; print('PyTorch version:', torch.__version__)"
+        python -c "import transformers; print('Transformers version:', transformers.__version__)"
+        
+    - name: Deploy to Hugging Face Space
+      env:
+        HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        HF_USERNAME: ${{ secrets.HF_USERNAME }}
+        SPACE_NAME: ${{ secrets.SPACE_NAME }}
+      run: |
+        # Install huggingface_hub
+        pip install huggingface_hub
+        
+        # Create space if it doesn't exist
+        python -c "
+        from huggingface_hub import HfApi
+        api = HfApi(token='$HF_TOKEN')
+        
+        try:
+            # Try to get space info
+            api.space_info('$HF_USERNAME/$SPACE_NAME')
+            print(f'Space $HF_USERNAME/$SPACE_NAME already exists')
+        except:
+            # Create new space
+            api.create_space(
+                repo_id='$HF_USERNAME/$SPACE_NAME',
+                space_sdk='streamlit',
+                space_hardware='cpu-basic'
+            )
+            print(f'Created new space: $HF_USERNAME/$SPACE_NAME')
+        "
+        
+        # Upload files to the space
+        python -c "
+        from huggingface_hub import HfApi
+        import os
+        
+        api = HfApi(token='$HF_TOKEN')
+        
+        # Files to upload
+        files_to_upload = [
+            'app.py',
+            'requirements.txt',
+            'README.md',
+            'simple_model_manager.py'
+        ]
+        
+        # Upload each file
+        for file_path in files_to_upload:
+            if os.path.exists(file_path):
+                api.upload_file(
+                    path_or_fileobj=file_path,
+                    path_in_repo=file_path,
+                    repo_id='$HF_USERNAME/$SPACE_NAME',
+                    repo_type='space'
+                )
+                print(f'Uploaded {file_path}')
+            else:
+                print(f'File {file_path} not found, skipping')
+        
+        # Create .gitattributes for the space
+        gitattributes_content = '''*.ipynb filter=ipynb-output-only
+*.ipynb diff=ipynb
+*.ipynb merge=ipynb
+*.ipynb text eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.txt text eol=lf'''
+        
+        api.upload_file(
+            path_or_fileobj=gitattributes_content.encode(),
+            path_in_repo='.gitattributes',
+            repo_id='$HF_USERNAME/$SPACE_NAME',
+            repo_type='space'
+        )
+        print('Uploaded .gitattributes')
+        "
+        
+    - name: Notify deployment status
+      if: always()
+      run: |
+        if [ ${{ job.status }} == 'success' ]; then
+          echo "✅ Successfully deployed to Hugging Face Space!"
+          echo "🌐 Space URL: https://huggingface.co/spaces/${{ secrets.HF_USERNAME }}/${{ secrets.SPACE_NAME }}"
+        else
+          echo "❌ Deployment failed!"
+        fi

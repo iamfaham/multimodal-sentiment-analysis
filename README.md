@@ -1,3 +1,14 @@
+---
+title: Sentiment Analysis Testing Ground
+emoji: 🧠
+colorFrom: blue
+colorTo: purple
+sdk: streamlit
+sdk_version: "1.28.0"
+app_file: app.py
+pinned: false
+---
+
 # Sentiment Analysis Testing Ground
 
 A comprehensive multi-page Streamlit application for testing three independent sentiment analysis models: text, audio, and vision-based sentiment analysis.

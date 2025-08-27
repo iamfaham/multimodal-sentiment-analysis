@@ -26,15 +26,28 @@ RUN apt-get update && apt-get install -y \
 
 # Copy requirements and install Python dependencies
 COPY requirements.txt .
+
+# Set environment variables to prefer pre-built wheels
+ENV PIP_PREFER_BINARY=1
+ENV PIP_NO_BUILD_ISOLATION=0
+
+# Upgrade pip and install numpy first (to avoid conflicts)
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+RUN pip install --no-cache-dir "numpy>=1.24.0,<2.0.0"
+
+# Install the rest of the requirements
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Verify moviepy installation
 RUN python -c "import moviepy; print('MoviePy version:', moviepy.__version__)"
 
-# Copy the app
+# Copy the app and test script
 COPY app.py .
 COPY simple_model_manager.py .
+COPY test_imports.py .
+
+# Test all imports work correctly
+RUN python test_imports.py
 
 # Expose port
 EXPOSE 7860

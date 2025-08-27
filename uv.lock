@@ -1455,7 +1455,7 @@ dependencies = [
 requires-dist = [
     { name = "gdown", specifier = ">=5.2.0" },
     { name = "moviepy", specifier = ">=2.2.1" },
-    { name = "opencv-python-headless", specifier = ">=4.12.0.88" },
+    { name = "opencv-python-headless", specifier = ">=4.8.0" },
     { name = "python-dotenv", specifier = ">=1.1.1" },
     { name = "speechrecognition", specifier = ">=3.10.0" },
     { name = "streamlit-webrtc", specifier = ">=0.47.0" },

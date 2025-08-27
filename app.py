@@ -358,7 +358,6 @@ def predict_audio_sentiment(audio_bytes):
 
         # Load and preprocess audio
         import librosa
-        import io
         import tempfile
 
         # Save audio bytes to temporary file

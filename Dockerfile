@@ -4,7 +4,7 @@ FROM python:3.11-slim
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies for OpenCV and audio
+# Install system dependencies for OpenCV, audio, and moviepy
 RUN apt-get update && apt-get install -y \
     libgl1-mesa-glx \
     libglib2.0-0 \
@@ -20,6 +20,7 @@ RUN apt-get update && apt-get install -y \
     libjpeg-dev \
     libpng-dev \
     libtiff-dev \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install Python dependencies

@@ -21,11 +21,16 @@ RUN apt-get update && apt-get install -y \
     libpng-dev \
     libtiff-dev \
     ffmpeg \
+    libav-tools \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install Python dependencies
 COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Verify moviepy installation
+RUN python -c "import moviepy; print('MoviePy version:', moviepy.__version__)"
 
 # Copy the app
 COPY app.py .

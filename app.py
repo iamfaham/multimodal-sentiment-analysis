@@ -614,7 +614,15 @@ def extract_audio_from_video(video_file):
     """
     try:
         import tempfile
-        from moviepy import VideoFileClip
+
+        try:
+            from moviepy import VideoFileClip
+        except ImportError as e:
+            st.error(f"MoviePy import failed: {e}")
+            st.error(
+                "This usually means the Docker build failed to install moviepy properly"
+            )
+            return None
 
         # Save video bytes to temporary file
         with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_file:

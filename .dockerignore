@@ -48,7 +48,7 @@ Thumbs.db
 .ipynb_checkpoints/
 
 # Models (if they're large)
-models/*.pth
+model_weights/*.pth
 
 # Logs
 *.log

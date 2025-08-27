@@ -76,8 +76,22 @@ sentiment-fused/
 ├── notebooks/                     # Development notebooks
 │   ├── audio_sentiment_analysis.ipynb    # Audio model development
 │   └── vision_sentiment_analysis.ipynb   # Vision model development
-└── models/                        # Model storage directory
+├── model_weights/                 # Model storage directory (downloaded .pth files)
+└── src/                           # Source code package
+    ├── __init__.py               # Package initialization
+    ├── config/                   # Configuration settings
+    ├── models/                   # Model logic and inference code
+    ├── utils/                    # Utility functions and preprocessing
+    └── ui/                       # User interface components
 ```
+
+### Directory Explanation
+
+- **`model_weights/`**: Contains the actual trained model files (`.pth` files) downloaded from Google Drive at inference time.
+- **`src/models/`**: Contains the Python code for model loading, inference, and prediction logic
+- **`src/utils/`**: Contains preprocessing utilities for audio, vision, and text data
+- **`src/config/`**: Contains centralized configuration settings for the entire application
+- **`src/ui/`**: Contains Streamlit UI components and styling
 
 ## Key Features
 
@@ -264,5 +278,17 @@ Key libraries used:
 6. **Production Ready**: Docker containerization and deployment
 7. **Video Analysis**: Comprehensive video processing with multi-modal extraction
 8. **Speech Recognition**: Audio-to-text transcription for enhanced analysis
+9. **Modular Architecture**: Clean, maintainable code structure with separated concerns
+10. **Professional Code Organization**: Proper Python packaging with config, models, utils, and UI modules
+
+## Recent Improvements
+
+The project has been refactored from a monolithic structure to a clean, modular architecture:
+
+- **Modular Design**: Separated into logical modules (`src/config/`, `src/models/`, `src/utils/`, `src/ui/`)
+- **Centralized Configuration**: All settings consolidated in `src/config/settings.py`
+- **Clean Separation**: Model logic, preprocessing, and UI components are now in dedicated modules
+- **Better Maintainability**: Easier to modify, test, and extend individual components
+- **Professional Structure**: Follows Python packaging best practices
 
 This project serves as a comprehensive example of building production-ready multimodal AI applications with modern Python tools and frameworks.

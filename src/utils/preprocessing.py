@@ -20,13 +20,10 @@ except ImportError:
 from ..config.settings import (
     IMAGE_TRANSFORMS,
     AUDIO_MODEL_CONFIG,
-    VISION_MODEL_CONFIG,
-    SUPPORTED_IMAGE_FORMATS,
-    SUPPORTED_AUDIO_FORMATS,
 )
 
 # Add Any to typing imports
-from typing import List, Optional, Tuple, Union, Any
+from typing import List, Optional, Union, Any
 
 # Add torch import for audio preprocessing
 try:

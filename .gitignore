@@ -1,6 +1,6 @@
 # Model files
 *.pth
-models/*.pth
+model_weights/*.pth
 *.pt
 *.pkl
 *.h5
@@ -40,7 +40,6 @@ venv/
 env/
 ENV/
 .venv/
-.venv2/
 .env/
 
 # IDE
@@ -63,4 +62,4 @@ logs/
 .cache/
 .pytest_cache/
 
-models/
+model_weights/

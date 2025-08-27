@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 class SimpleModelManager:
     """Simple model manager that downloads models from Google Drive using gdown"""
 
-    def __init__(self, model_dir: str = "models", cache_models: bool = True):
+    def __init__(self, model_dir: str = "model_weights", cache_models: bool = True):
         """
         Initialize simple model manager
 

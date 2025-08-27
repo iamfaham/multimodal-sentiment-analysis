@@ -1,781 +1,67 @@
+"""
+Refactored Sentiment Fused - Multimodal Sentiment Analysis Application
+
+This is the main entry point for the application, now using a modular structure.
+"""
+
 import streamlit as st
 import pandas as pd
 from PIL import Image
-import os
-import torch
-import torch.nn as nn
-from torchvision import transforms, models
-import torch.nn.functional as F
-import cv2
+import logging
 
-# Import the Google Drive model manager
-from simple_model_manager import SimpleModelManager
+# Import our modular components
+from src.config.settings import (
+    APP_NAME,
+    APP_VERSION,
+    APP_ICON,
+    APP_LAYOUT,
+    CUSTOM_CSS,
+    SUPPORTED_IMAGE_FORMATS,
+    SUPPORTED_AUDIO_FORMATS,
+    SUPPORTED_VIDEO_FORMATS,
+)
+from src.models.text_model import predict_text_sentiment
+from src.models.audio_model import predict_audio_sentiment, load_audio_model
+from src.models.vision_model import predict_vision_sentiment, load_vision_model
+from src.models.fused_model import predict_fused_sentiment
+from src.utils.preprocessing import (
+    extract_frames_from_video,
+    extract_audio_from_video,
+    transcribe_audio,
+)
+from src.utils.file_handling import get_file_info, format_file_size
+from src.utils.sentiment_mapping import get_sentiment_colors, format_sentiment_result
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Page configuration
 st.set_page_config(
-    page_title="Multimodal Sentiment Analysis",
-    page_icon="🧠",
-    layout="wide",
+    page_title=APP_NAME,
+    page_icon=APP_ICON,
+    layout=APP_LAYOUT,
     initial_sidebar_state="expanded",
 )
 
-# Custom CSS for better styling
-st.markdown(
-    """
-<style>
-    .main-header {
-        font-size: 2.5rem;
-        font-weight: bold;
-        color: #1f77b4;
-        text-align: center;
-        margin-bottom: 2rem;
-    }
-    .model-card {
-        background-color: #f0f2f6;
-        padding: 1.5rem;
-        border-radius: 10px;
-        margin: 1rem 0;
-        border-left: 4px solid #1f77b4;
-    }
-    .result-box {
-        background-color: #e8f4fd;
-        padding: 1rem;
-        border-radius: 8px;
-        border: 1px solid #1f77b4;
-        margin: 1rem 0;
-    }
-    .upload-section {
-        background-color: #f8f9fa;
-        padding: 1.5rem;
-        border-radius: 10px;
-        border: 2px dashed #dee2e6;
-        text-align: center;
-        margin: 1rem 0;
-    }
-</style>
-""",
-    unsafe_allow_html=True,
-)
+# Apply custom CSS
+st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
 
-# Initialize the Google Drive model manager
-@st.cache_resource
-def get_model_manager():
-    """Get the Google Drive model manager instance"""
-    try:
-        manager = SimpleModelManager()
-        return manager
-    except Exception as e:
-        st.error(f"Failed to initialize model manager: {e}")
-        return None
-
-
-# Global variables for models
-@st.cache_resource
-def load_vision_model():
-    """Load the pre-trained ResNet-50 vision sentiment model from Google Drive"""
-    try:
-        manager = get_model_manager()
-        if manager is None:
-            st.error("Model manager not available")
-            return None, None, None
-
-        # Load the model using the Google Drive manager
-        model, device, num_classes = manager.load_vision_model()
-
-        if model is None:
-            st.error("Failed to load vision model from Google Drive")
-            return None, None, None
-
-        st.success(f"Vision model loaded successfully with {num_classes} classes!")
-        return model, device, num_classes
-    except Exception as e:
-        st.error(f"Error loading vision model: {str(e)}")
-        return None, None, None
-
-
-@st.cache_data
-def get_vision_transforms():
-    """Get the image transforms used during FER2013 training"""
-    return transforms.Compose(
-        [
-            transforms.Resize(224),  # Match training: transforms.Resize(224)
-            transforms.CenterCrop(224),  # Match training: transforms.CenterCrop(224)
-            transforms.ToTensor(),
-            transforms.Normalize(
-                mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
-            ),  # ImageNet normalization
-        ]
-    )
-
-
-def detect_and_preprocess_face(image, crop_tightness=0.05):
-    """
-    Detect face in image, crop to face region, convert to grayscale, and resize to 224x224
-    to match FER2013 dataset format (grayscale converted to 3-channel RGB)
-
-    Args:
-        image: Input image (PIL Image or numpy array)
-        crop_tightness: Padding around face (0.0 = no padding, 0.3 = 30% padding)
-    """
-    try:
-        import cv2
-        import numpy as np
-
-        # Convert PIL image to OpenCV format
-        if isinstance(image, Image.Image):
-            # Convert PIL to numpy array
-            img_array = np.array(image)
-            # Convert RGB to BGR for OpenCV
-            if len(img_array.shape) == 3:
-                img_array = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
-        else:
-            img_array = image
-
-        # Load face detection cascade
-        face_cascade = cv2.CascadeClassifier(
-            cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-        )
-
-        # Convert to grayscale for face detection (detection works better on grayscale)
-        gray = cv2.cvtColor(img_array, cv2.COLOR_BGR2GRAY)
-
-        # Detect faces
-        faces = face_cascade.detectMultiScale(
-            gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
-        )
-
-        if len(faces) == 0:
-            st.warning("No face detected in the image. Using center crop instead.")
-            # Fallback: center crop and resize
-            if isinstance(image, Image.Image):
-                # Convert to RGB first
-                rgb_pil = image.convert("RGB")
-                # Center crop to square
-                width, height = rgb_pil.size
-                size = min(width, height)
-                left = (width - size) // 2
-                top = (height - size) // 2
-                right = left + size
-                bottom = top + size
-                cropped = rgb_pil.crop((left, top, right, bottom))
-                # Resize to 224x224 (matching FER2013 training: transforms.Resize(224))
-                resized = cropped.resize((224, 224), Image.Resampling.LANCZOS)
-
-                # Convert to grayscale and then to 3-channel RGB
-                gray_pil = resized.convert("L")
-                # Convert back to RGB (this replicates grayscale values to all 3 channels)
-                gray_rgb_pil = gray_pil.convert("RGB")
-                return gray_rgb_pil
-            else:
-                return None
-
-        # Get the largest face (assuming it's the main subject)
-        x, y, w, h = max(faces, key=lambda rect: rect[2] * rect[3])
-
-        # Add padding around the face based on user preference
-        padding_x = int(w * crop_tightness)
-        padding_y = int(h * crop_tightness)
-
-        # Ensure we don't go out of bounds
-        x1 = max(0, x - padding_x)
-        y1 = max(0, y - padding_y)
-        x2 = min(img_array.shape[1], x + w + padding_x)
-        y2 = min(img_array.shape[0], y + h + padding_y)
-
-        # Crop to face region
-        face_crop = img_array[y1:y2, x1:x2]
-
-        # Convert BGR to RGB first
-        face_crop_rgb = cv2.cvtColor(face_crop, cv2.COLOR_BGR2RGB)
-
-        # Convert to grayscale
-        face_gray = cv2.cvtColor(face_crop_rgb, cv2.COLOR_RGB2GRAY)
-
-        # Resize to 224x224 (matching FER2013 training: transforms.Resize(224))
-        face_resized = cv2.resize(face_gray, (224, 224), interpolation=cv2.INTER_AREA)
-
-        # Convert grayscale to 3-channel RGB (replicate grayscale values)
-        face_rgb_3channel = cv2.cvtColor(face_resized, cv2.COLOR_GRAY2RGB)
-
-        # Convert back to PIL Image
-        face_pil = Image.fromarray(face_rgb_3channel)
-
-        return face_pil
-
-    except ImportError:
-        st.error(
-            "OpenCV not installed. Please install it with: pip install opencv-python"
-        )
-        st.info("Falling back to basic preprocessing...")
-        # Fallback: basic grayscale conversion and resize
-        if isinstance(image, Image.Image):
-            rgb_pil = image.convert("RGB")
-            resized = rgb_pil.resize((48, 48), Image.Resampling.LANCZOS)
-            # Convert to grayscale and then to 3-channel RGB
-            gray_pil = resized.convert("L")
-            gray_rgb_pil = gray_pil.convert("RGB")
-            return gray_rgb_pil
-        return None
-    except Exception as e:
-        st.error(f"Error in face detection: {str(e)}")
-        st.info("Falling back to basic preprocessing...")
-        # Fallback: basic grayscale conversion and resize
-        if isinstance(image, Image.Image):
-            rgb_pil = image.convert("RGB")
-            resized = rgb_pil.resize((48, 48), Image.Resampling.LANCZOS)
-            # Convert to grayscale and then to 3-channel RGB
-            gray_pil = resized.convert("L")
-            gray_rgb_pil = gray_pil.convert("RGB")
-            return gray_rgb_pil
-        return None
-
-
-def get_sentiment_mapping(num_classes):
-    """Get the sentiment mapping based on number of classes"""
-    if num_classes == 3:
-        return {0: "Negative", 1: "Neutral", 2: "Positive"}
-    elif num_classes == 4:
-        # Common 4-class emotion mapping
-        return {0: "Angry", 1: "Sad", 2: "Happy", 3: "Neutral"}
-    elif num_classes == 7:
-        # FER2013 7-class emotion mapping
-        return {
-            0: "Angry",
-            1: "Disgust",
-            2: "Fear",
-            3: "Happy",
-            4: "Sad",
-            5: "Surprise",
-            6: "Neutral",
-        }
-    else:
-        # Generic mapping for unknown number of classes
-        return {i: f"Class_{i}" for i in range(num_classes)}
-
-
-# Placeholder functions for model predictions
-def predict_text_sentiment(text):
-    """
-    Analyze text sentiment using TextBlob
-    """
-    if not text or text.strip() == "":
-        return "No text provided", 0.0
-
-    try:
-        from textblob import TextBlob
-
-        # Create TextBlob object
-        blob = TextBlob(text)
-
-        # Get polarity (-1 to 1, where -1 is very negative, 1 is very positive)
-        polarity = blob.sentiment.polarity
-
-        # Get subjectivity (0 to 1, where 0 is very objective, 1 is very subjective)
-        subjectivity = blob.sentiment.subjectivity
-
-        # Convert polarity to sentiment categories
-        if polarity > 0.1:
-            sentiment = "Positive"
-            confidence = min(0.95, 0.6 + abs(polarity) * 0.3)
-        elif polarity < -0.1:
-            sentiment = "Negative"
-            confidence = min(0.95, 0.6 + abs(polarity) * 0.3)
-        else:
-            sentiment = "Neutral"
-            confidence = 0.7 - abs(polarity) * 0.2
-
-        # Round confidence to 2 decimal places
-        confidence = round(confidence, 2)
-
-        return sentiment, confidence
-
-    except ImportError:
-        st.error("TextBlob not installed. Please install it with: pip install textblob")
-        return "TextBlob not available", 0.0
-    except Exception as e:
-        st.error(f"Error in text sentiment analysis: {str(e)}")
-        return "Error occurred", 0.0
-
-
-@st.cache_resource
-def load_audio_model():
-    """Load the pre-trained Wav2Vec2 audio sentiment model from Google Drive"""
-    try:
-        manager = get_model_manager()
-        if manager is None:
-            st.error("Model manager not available")
-            return None, None, None, None
-
-        # Load the model using the Google Drive manager
-        model, device = manager.load_audio_model()
-
-        if model is None:
-            st.error("Failed to load audio model from Google Drive")
-            return None, None, None, None
-
-        # For Wav2Vec2 models, we need to determine the number of classes
-        # This is typically available in the model configuration
-        try:
-            num_classes = model.config.num_labels
-        except:
-            # Fallback: try to infer from the model
-            try:
-                num_classes = model.classifier.out_features
-            except:
-                num_classes = 3  # Default assumption
-
-        # Load feature extractor
-        from transformers import AutoFeatureExtractor
-
-        feature_extractor = AutoFeatureExtractor.from_pretrained(
-            "facebook/wav2vec2-base"
-        )
-
-        st.success(f"Audio model loaded successfully with {num_classes} classes!")
-        return model, device, num_classes, feature_extractor
-    except Exception as e:
-        st.error(f"Error loading audio model: {str(e)}")
-        return None, None, None, None
-
-
-def predict_audio_sentiment(audio_bytes):
-    """
-    Analyze audio sentiment using fine-tuned Wav2Vec2 model
-    Preprocessing matches CREMA-D + RAVDESS training specifications:
-    - Target sampling rate: 16kHz
-    - Max duration: 5.0 seconds
-    - Feature extraction: AutoFeatureExtractor with max_length, truncation, padding
-    """
-    if audio_bytes is None:
-        return "No audio provided", 0.0
-
-    try:
-        # Load model if not already loaded
-        model, device, num_classes, feature_extractor = load_audio_model()
-        if model is None:
-            return "Model not loaded", 0.0
-
-        # Load and preprocess audio
-        import librosa
-        import tempfile
-
-        # Save audio bytes to temporary file
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
-            tmp_file.write(audio_bytes)
-            tmp_file_path = tmp_file.name
-
-        try:
-            # Load audio with librosa
-            audio, sr = librosa.load(tmp_file_path, sr=None)
-
-            # Resample to 16kHz if needed
-            if sr != 16000:
-                audio = librosa.resample(y=audio, orig_sr=sr, target_sr=16000)
-
-            # Preprocess with feature extractor (matching CREMA-D + RAVDESS training exactly)
-            # From training: max_length=int(max_duration_s * TARGET_SAMPLING_RATE) = 5.0 * 16000
-            inputs = feature_extractor(
-                audio,
-                sampling_rate=16000,
-                max_length=int(5.0 * 16000),  # 5 seconds max (matching training)
-                truncation=True,
-                padding="max_length",
-                return_tensors="pt",
-            )
-
-            # Move to device
-            input_values = inputs.input_values.to(device)
-
-            # Run inference
-            with torch.no_grad():
-                outputs = model(input_values)
-                probabilities = torch.softmax(outputs.logits, dim=1)
-                confidence, predicted = torch.max(probabilities, 1)
-
-                # Get sentiment mapping based on number of classes
-                if num_classes == 3:
-                    sentiment_map = {0: "Negative", 1: "Neutral", 2: "Positive"}
-                else:
-                    # Generic mapping for unknown number of classes
-                    sentiment_map = {i: f"Class_{i}" for i in range(num_classes)}
-
-                sentiment = sentiment_map[predicted.item()]
-                confidence_score = confidence.item()
-
-            return sentiment, confidence_score
-
-        finally:
-            # Clean up temporary file
-            os.unlink(tmp_file_path)
-
-    except ImportError as e:
-        st.error(f"Required library not installed: {str(e)}")
-        st.info("Please install: pip install librosa transformers")
-        return "Library not available", 0.0
-    except Exception as e:
-        st.error(f"Error in audio sentiment prediction: {str(e)}")
-        return "Error occurred", 0.0
-
-
-def predict_vision_sentiment(image, crop_tightness=0.05):
-    """
-    Load ResNet-50 and run inference for vision sentiment analysis
-
-    Args:
-        image: Input image (PIL Image or numpy array)
-        crop_tightness: Padding around face (0.0 = no padding, 0.3 = 30% padding)
-    """
-    if image is None:
-        return "No image provided", 0.0
-
-    try:
-        # Load model if not already loaded
-        model, device, num_classes = load_vision_model()
-        if model is None:
-            return "Model not loaded", 0.0
-
-        # Preprocess image to match FER2013 format
-        st.info(
-            "Detecting face and preprocessing image to match training data format..."
-        )
-        preprocessed_image = detect_and_preprocess_face(image, crop_tightness=0.0)
-
-        if preprocessed_image is None:
-            return "Image preprocessing failed", 0.0
-
-        # Show preprocessed image
-        st.image(
-            preprocessed_image,
-            caption="Preprocessed Image (48x48 Grayscale → 3-channel RGB)",
-            width=200,
-        )
-
-        # Get transforms
-        transform = get_vision_transforms()
-
-        # Convert preprocessed image to tensor
-        image_tensor = transform(preprocessed_image).unsqueeze(0).to(device)
-
-        # Run inference
-        with torch.no_grad():
-            outputs = model(image_tensor)
-
-            # Debug: print output shape
-            st.info(f"Model output shape: {outputs.shape}")
-
-            probabilities = F.softmax(outputs, dim=1)
-            confidence, predicted = torch.max(probabilities, 1)
-
-            # Get sentiment mapping based on number of classes
-            sentiment_map = get_sentiment_mapping(num_classes)
-            sentiment = sentiment_map[predicted.item()]
-            confidence_score = confidence.item()
-
-        return sentiment, confidence_score
-
-    except Exception as e:
-        st.error(f"Error in vision sentiment prediction: {str(e)}")
-        st.error(
-            f"Model output shape mismatch. Expected {num_classes} classes but got different."
-        )
-        return "Error occurred", 0.0
-
-
-def predict_fused_sentiment(text=None, audio_bytes=None, image=None):
-    """
-    TODO: Implement ensemble/fusion logic combining all three models
-    This is a placeholder function for fused sentiment analysis
-    """
-    # Placeholder logic - replace with actual fusion implementation
-    results = []
-
-    if text:
-        text_sentiment, text_conf = predict_text_sentiment(text)
-        results.append((text_sentiment, text_conf))
-
-    if audio_bytes:
-        audio_sentiment, audio_conf = predict_audio_sentiment(audio_bytes)
-        results.append((audio_sentiment, audio_conf))
-
-    if image:
-        vision_sentiment, vision_conf = predict_vision_sentiment(image)
-        results.append((vision_sentiment, vision_conf))
-
-    if not results:
-        return "No inputs provided", 0.0
-
-    # Simple ensemble logic (replace with your fusion strategy)
-    sentiment_counts = {}
-    total_confidence = 0
-
-    for sentiment, confidence in results:
-        sentiment_counts[sentiment] = sentiment_counts.get(sentiment, 0) + 1
-        total_confidence += confidence
-
-    # Majority voting with confidence averaging
-    final_sentiment = max(sentiment_counts, key=sentiment_counts.get)
-    avg_confidence = total_confidence / len(results)
-
-    return final_sentiment, avg_confidence
-
-
-def extract_frames_from_video(video_file, max_frames=10):
-    """
-    Extract frames from video file for vision sentiment analysis
-
-    Args:
-        video_file: StreamlitUploadedFile or bytes
-        max_frames: Maximum number of frames to extract
-
-    Returns:
-        List of PIL Image objects
-    """
-    try:
-        import cv2
-        import numpy as np
-        import tempfile
-
-        # Save video bytes to temporary file
-        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_file:
-            if hasattr(video_file, "getvalue"):
-                tmp_file.write(video_file.getvalue())
-            else:
-                tmp_file.write(video_file)
-            tmp_file_path = tmp_file.name
-
-        try:
-            # Open video with OpenCV
-            cap = cv2.VideoCapture(tmp_file_path)
-
-            if not cap.isOpened():
-                st.error("Could not open video file")
-                return []
-
-            frames = []
-            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            fps = cap.get(cv2.CAP_PROP_FPS)
-            duration = total_frames / fps if fps > 0 else 0
-
-            st.info(
-                f"📹 Video: {total_frames} frames, {fps:.1f} FPS, {duration:.1f}s duration"
-            )
-
-            # Extract frames at strategic intervals
-            if total_frames > 0:
-                # Select frames: start, 25%, 50%, 75%, end
-                frame_indices = [
-                    0,
-                    int(total_frames * 0.25),
-                    int(total_frames * 0.5),
-                    int(total_frames * 0.75),
-                    total_frames - 1,
-                ]
-                frame_indices = list(set(frame_indices))  # Remove duplicates
-                frame_indices.sort()
-
-                for frame_idx in frame_indices:
-                    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-                    ret, frame = cap.read()
-                    if ret:
-                        # Convert BGR to RGB
-                        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                        # Convert to PIL Image
-                        pil_image = Image.fromarray(frame_rgb)
-                        frames.append(pil_image)
-
-            cap.release()
-            return frames
-
-        finally:
-            # Clean up temporary file
-            os.unlink(tmp_file_path)
-
-    except ImportError:
-        st.error(
-            "OpenCV not installed. Please install it with: pip install opencv-python"
-        )
-        return []
-    except Exception as e:
-        st.error(f"Error extracting frames: {str(e)}")
-        return []
-
-
-def extract_audio_from_video(video_file):
-    """
-    Extract audio from video file for audio sentiment analysis
-
-    Args:
-        video_file: StreamlitUploadedFile or bytes
-
-    Returns:
-        Audio bytes in WAV format
-    """
-    try:
-        import tempfile
-
-        try:
-            from moviepy import VideoFileClip
-        except ImportError as e:
-            st.error(f"MoviePy import failed: {e}")
-            st.error(
-                "This usually means the Docker build failed to install moviepy properly"
-            )
-            return None
-
-        # Save video bytes to temporary file
-        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_file:
-            if hasattr(video_file, "getvalue"):
-                tmp_file.write(video_file.getvalue())
-            else:
-                tmp_file.write(video_file)
-            tmp_file_path = tmp_file.name
-
-        try:
-            # Extract audio using moviepy
-            video = VideoFileClip(tmp_file_path)
-            audio = video.audio
-
-            if audio is None:
-                st.warning("No audio track found in video")
-                return None
-
-            # Save audio to temporary WAV file
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as audio_file:
-                audio_path = audio_file.name
-
-            # Export audio as WAV
-            audio.write_audiofile(audio_path, logger=None)
-
-            # Read the audio file and return bytes
-            with open(audio_path, "rb") as f:
-                audio_bytes = f.read()
-
-            # Clean up temporary audio file
-            try:
-                os.unlink(audio_path)
-            except (OSError, PermissionError):
-                # File might be in use, skip cleanup
-                pass
-
-            return audio_bytes
-
-        finally:
-            # Clean up temporary video file
-            try:
-                # Close video and audio objects first
-                if "video" in locals():
-                    video.close()
-                if "audio" in locals() and audio:
-                    audio.close()
-
-                # Wait a bit before trying to delete
-                import time
-
-                time.sleep(0.1)
-
-                os.unlink(tmp_file_path)
-            except (OSError, PermissionError):
-                # File might be in use, skip cleanup
-                pass
-
-    except ImportError:
-        st.error("MoviePy not installed. Please install it with: pip install moviepy")
-        return None
-    except Exception as e:
-        st.error(f"Error extracting audio: {str(e)}")
-        return None
-
-
-def transcribe_audio(audio_bytes):
-    """
-    Transcribe audio to text for text sentiment analysis
-
-    Args:
-        audio_bytes: Audio bytes in WAV format
-
-    Returns:
-        Transcribed text string
-    """
-    if audio_bytes is None:
-        return ""
-
-    try:
-        import tempfile
-        import speech_recognition as sr
-
-        # Save audio bytes to temporary file
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
-            tmp_file.write(audio_bytes)
-            tmp_file_path = tmp_file.name
-
-        try:
-            # Initialize recognizer
-            recognizer = sr.Recognizer()
-
-            # Load audio file
-            with sr.AudioFile(tmp_file_path) as source:
-                # Read audio data
-                audio_data = recognizer.record(source)
-
-                # Transcribe using Google Speech Recognition
-                try:
-                    text = recognizer.recognize_google(audio_data)
-                    return text
-                except sr.UnknownValueError:
-                    st.warning("Speech could not be understood")
-                    return ""
-                except sr.RequestError as e:
-                    st.error(
-                        f"Could not request results from speech recognition service: {e}"
-                    )
-                    return ""
-
-        finally:
-            # Clean up temporary file
-            os.unlink(tmp_file_path)
-
-    except ImportError:
-        st.error(
-            "SpeechRecognition not installed. Please install it with: pip install SpeechRecognition"
-        )
-        return ""
-    except Exception as e:
-        st.error(f"Error transcribing audio: {str(e)}")
-        return ""
-
-
-# Sidebar navigation
-st.sidebar.title("Sentiment Analysis")
-st.sidebar.markdown("---")
-
-# Navigation
-page = st.sidebar.selectbox(
-    "Choose a page:",
-    [
-        "Home",
-        "Text Sentiment",
-        "Audio Sentiment",
-        "Vision Sentiment",
-        "Fused Model",
-        "Max Fusion",
-    ],
-)
-
-# Home Page
-if page == "Home":
+def render_home_page():
+    """Render the home page with model information."""
     st.markdown(
-        '<h1 class="main-header">Multimodal Sentiment Analysis</h1>',
+        f'<h1 class="main-header">{APP_NAME}</h1>',
         unsafe_allow_html=True,
     )
 
     st.markdown(
         """
-    <div class="model-card">
-        <h2>Welcome to your Multi-Modal Sentiment Analysis Testing Platform!</h2>
-        <p>This application provides a comprehensive testing environment for your three independent sentiment analysis models:</p>
-    </div>
-    """,
+        <div class="model-card">
+            <h2>Welcome to your Multi-Modal Sentiment Analysis Testing Platform!</h2>
+            <p>This application provides a comprehensive testing environment for your three independent sentiment analysis models:</p>
+        </div>
+        """,
         unsafe_allow_html=True,
     )
 
@@ -784,105 +70,106 @@ if page == "Home":
     with col1:
         st.markdown(
             """
-        <div class="model-card">
-            <h3>Text Sentiment Model</h3>
-            <p>READY TO USE - Analyze sentiment from text input using TextBlob</p>
-                         <ul>
-                 <li>Process any text input</li>
-                 <li>Get sentiment classification (Positive/Negative/Neutral)</li>
-                 <li>View confidence scores</li>
-                 <li>Real-time NLP analysis</li>
-             </ul>
-        </div>
-        """,
+            <div class="model-card">
+                <h3>Text Sentiment Model</h3>
+                <p>READY TO USE - Analyze sentiment from text input using TextBlob</p>
+                <ul>
+                    <li>Process any text input</li>
+                    <li>Get sentiment classification (Positive/Negative/Neutral)</li>
+                    <li>View confidence scores</li>
+                    <li>Real-time NLP analysis</li>
+                </ul>
+            </div>
+            """,
             unsafe_allow_html=True,
         )
 
     with col2:
         st.markdown(
             """
-        <div class="model-card">
-            <h3>Audio Sentiment Model</h3>
-            <p>READY TO USE - Analyze sentiment from audio files using fine-tuned Wav2Vec2</p>
-                         <ul>
-                 <li>Upload audio files (.wav, .mp3, .m4a, .flac)</li>
-                 <li>Record audio directly with microphone (max 5s)</li>
-                 <li>Automatic preprocessing: 16kHz sampling, 5s max duration (CREMA-D + RAVDESS format)</li>
-                 <li>Listen to uploaded/recorded audio</li>
-                 <li>Get sentiment predictions</li>
-                 <li>Real-time audio analysis</li>
-             </ul>
-        </div>
-        """,
+            <div class="model-card">
+                <h3>Audio Sentiment Model</h3>
+                <p>READY TO USE - Analyze sentiment from audio files using fine-tuned Wav2Vec2</p>
+                <ul>
+                    <li>Upload audio files (.wav, .mp3, .m4a, .flac)</li>
+                    <li>Record audio directly with microphone (max 5s)</li>
+                    <li>Automatic preprocessing: 16kHz sampling, 5s max duration</li>
+                    <li>Listen to uploaded/recorded audio</li>
+                    <li>Get sentiment predictions</li>
+                    <li>Real-time audio analysis</li>
+                </ul>
+            </div>
+            """,
             unsafe_allow_html=True,
         )
 
     with col3:
         st.markdown(
             """
-        <div class="model-card">
-            <h3>Vision Sentiment Model</h3>
-            <p>Analyze sentiment from images using fine-tuned ResNet-50</p>
-                         <ul>
-                 <li>Upload image files (.png, .jpg, .jpeg, .bmp, .tiff)</li>
-                 <li>Automatic face detection & preprocessing</li>
-                 <li>Fixed 0% padding for tightest face crop</li>
-                 <li>Convert to 224x224 grayscale → 3-channel RGB (FER2013 format)</li>
-                 <li>Transforms: Resize(224) → CenterCrop(224) → ImageNet Normalization</li>
-                 <li>Preview original & preprocessed images</li>
-                 <li>Get sentiment predictions</li>
-             </ul>
-        </div>
-        """,
+            <div class="model-card">
+                <h3>Vision Sentiment Model</h3>
+                <p>Analyze sentiment from images using fine-tuned ResNet-50</p>
+                <ul>
+                    <li>Upload image files (.png, .jpg, .jpeg, .bmp, .tiff)</li>
+                    <li>Automatic face detection & preprocessing</li>
+                    <li>Fixed 0% padding for tightest face crop</li>
+                    <li>Convert to 224x224 grayscale → 3-channel RGB (FER2013 format)</li>
+                    <li>Transforms: Resize(224) → CenterCrop(224) → ImageNet Normalization</li>
+                    <li>Preview original & preprocessed images</li>
+                    <li>Get sentiment predictions</li>
+                </ul>
+            </div>
+            """,
             unsafe_allow_html=True,
         )
 
     st.markdown(
         """
-    <div class="model-card">
-        <h3>Fused Model</h3>
-        <p>Combine predictions from all three models for enhanced accuracy</p>
-        <ul>
-            <li>Multi-modal input processing</li>
-            <li>Ensemble prediction strategies</li>
-            <li>Comprehensive sentiment analysis</li>
-        </ul>
-    </div>
-    """,
+        <div class="model-card">
+            <h3>Fused Model</h3>
+            <p>Combine predictions from all three models for enhanced accuracy</p>
+            <ul>
+                <li>Multi-modal input processing</li>
+                <li>Ensemble prediction strategies</li>
+                <li>Comprehensive sentiment analysis</li>
+            </ul>
+        </div>
+        """,
         unsafe_allow_html=True,
     )
 
     st.markdown(
         """
-    <div class="model-card">
-        <h3>🎬 Max Fusion</h3>
-        <p>Ultimate video-based sentiment analysis combining all three modalities</p>
-        <ul>
-            <li>🎥 Record or upload 5-second videos</li>
-            <li>🔍 Extract frames for vision analysis</li>
-            <li>🎵 Extract audio for vocal sentiment</li>
-            <li>📝 Transcribe audio for text analysis</li>
-            <li>🚀 Comprehensive multi-modal results</li>
-        </ul>
-    </div>
-    """,
+        <div class="model-card">
+            <h3>🎬 Max Fusion</h3>
+            <p>Ultimate video-based sentiment analysis combining all three modalities</p>
+            <ul>
+                <li>🎥 Record or upload 5-second videos</li>
+                <li>🔍 Extract frames for vision analysis</li>
+                <li>🎵 Extract audio for vocal sentiment</li>
+                <li>📝 Transcribe audio for text analysis</li>
+                <li>🚀 Comprehensive multi-modal results</li>
+            </ul>
+        </div>
+        """,
         unsafe_allow_html=True,
     )
 
     st.markdown("---")
     st.markdown(
         """
-    <div style="text-align: center; color: #666;">
-        <p><strong>Note:</strong> This application now has <strong>ALL THREE MODELS</strong> fully integrated and ready to use!</p>
-        <p><strong>TextBlob</strong> (Text) + <strong>Wav2Vec2</strong> (Audio) + <strong>ResNet-50</strong> (Vision)</p>
-        <p><strong>Models are now loaded from Google Drive automatically!</strong></p>
-    </div>
-    """,
+        <div style="text-align: center; color: #666;">
+            <p><strong>Note:</strong> This application now has <strong>ALL THREE MODELS</strong> fully integrated and ready to use!</p>
+            <p><strong>TextBlob</strong> (Text) + <strong>Wav2Vec2</strong> (Audio) + <strong>ResNet-50</strong> (Vision)</p>
+            <p><strong>Models are now loaded from Google Drive automatically!</strong></p>
+        </div>
+        """,
         unsafe_allow_html=True,
     )
 
-# Text Sentiment Page
-elif page == "Text Sentiment":
+
+def render_text_sentiment_page():
+    """Render the text sentiment analysis page."""
     st.title("Text Sentiment Analysis")
     st.markdown("Analyze the sentiment of your text using our TextBlob-based model.")
 
@@ -910,28 +197,26 @@ elif page == "Text Sentiment":
                     st.metric("Confidence", f"{confidence:.2f}")
 
                 # Color-coded sentiment display
-                sentiment_colors = {
-                    "Positive": "🟢",
-                    "Negative": "🔴",
-                    "Neutral": "🟡",
-                }
+                sentiment_colors = get_sentiment_colors()
+                emoji = sentiment_colors.get(sentiment, "❓")
 
                 st.markdown(
                     f"""
-                <div class="result-box">
-                    <h4>{sentiment_colors.get(sentiment, "❓")} Sentiment: {sentiment}</h4>
-                    <p><strong>Confidence:</strong> {confidence:.2f}</p>
-                    <p><strong>Input Text:</strong> "{text_input[:100]}{'...' if len(text_input) > 100 else ''}"</p>
-                    <p><strong>Model:</strong> TextBlob (Natural Language Processing)</p>
-                </div>
-                """,
+                    <div class="result-box">
+                        <h4>{emoji} Sentiment: {sentiment}</h4>
+                        <p><strong>Confidence:</strong> {confidence:.2f}</p>
+                        <p><strong>Input Text:</strong> "{text_input[:100]}{'...' if len(text_input) > 100 else ''}"</p>
+                        <p><strong>Model:</strong> TextBlob (Natural Language Processing)</p>
+                    </div>
+                    """,
                     unsafe_allow_html=True,
                 )
         else:
             st.error("Please enter some text to analyze.")
 
-# Audio Sentiment Page
-elif page == "Audio Sentiment":
+
+def render_audio_sentiment_page():
+    """Render the audio sentiment analysis page."""
     st.title("Audio Sentiment Analysis")
     st.markdown(
         "Analyze the sentiment of your audio files using our fine-tuned Wav2Vec2 model."
@@ -969,7 +254,7 @@ elif page == "Audio Sentiment":
         # File uploader
         uploaded_audio = st.file_uploader(
             "Choose an audio file",
-            type=["wav", "mp3", "m4a", "flac"],
+            type=SUPPORTED_AUDIO_FORMATS,
             help="Supported formats: WAV, MP3, M4A, FLAC",
         )
 
@@ -979,12 +264,12 @@ elif page == "Audio Sentiment":
     else:  # Audio recording
         st.markdown(
             """
-        <div class="model-card">
-            <h3>Audio Recording</h3>
-            <p>Record audio directly with your microphone (max 5 seconds).</p>
-            <p><strong>Note:</strong> Make sure your microphone is accessible and you have permission to use it.</p>
-        </div>
-        """,
+            <div class="model-card">
+                <h3>Audio Recording</h3>
+                <p>Record audio directly with your microphone (max 5 seconds).</p>
+                <p><strong>Note:</strong> Make sure your microphone is accessible and you have permission to use it.</p>
+            </div>
+            """,
             unsafe_allow_html=True,
         )
 
@@ -1018,8 +303,10 @@ elif page == "Audio Sentiment":
                 uploaded_audio, format=f'audio/{uploaded_audio.name.split(".")[-1]}'
             )
             # File info for uploaded files
-            file_size = len(uploaded_audio.getvalue()) / 1024  # KB
-            st.info(f"File: {uploaded_audio.name} | Size: {file_size:.1f} KB")
+            file_info = get_file_info(uploaded_audio)
+            st.info(
+                f"File: {file_info['name']} | Size: {format_file_size(file_info['size_bytes'])}"
+            )
 
         # Analyze button
         if st.button(
@@ -1042,17 +329,18 @@ elif page == "Audio Sentiment":
                     st.metric("Confidence", f"{confidence:.2f}")
 
                 # Color-coded sentiment display
-                sentiment_colors = {"Positive": "🟢", "Negative": "🔴", "Neutral": "🟡"}
+                sentiment_colors = get_sentiment_colors()
+                emoji = sentiment_colors.get(sentiment, "❓")
 
                 st.markdown(
                     f"""
-                <div class="result-box">
-                    <h4>{sentiment_colors.get(sentiment, "❓")} Sentiment: {sentiment}</h4>
-                    <p><strong>Confidence:</strong> {confidence:.2f}</p>
-                    <p><strong>Audio Source:</strong> {audio_name}</p>
-                    <p><strong>Model:</strong> Wav2Vec2 (Fine-tuned on RAVDESS + CREMA-D)</p>
-                </div>
-                """,
+                    <div class="result-box">
+                        <h4>{emoji} Sentiment: {sentiment}</h4>
+                        <p><strong>Confidence:</strong> {confidence:.2f}</p>
+                        <p><strong>Audio Source:</strong> {audio_name}</p>
+                        <p><strong>Model:</strong> Wav2Vec2 (Fine-tuned on RAVDESS + CREMA-D)</p>
+                    </div>
+                    """,
                     unsafe_allow_html=True,
                 )
     else:
@@ -1061,8 +349,9 @@ elif page == "Audio Sentiment":
         else:
             st.info("Click the microphone button above to record audio for analysis.")
 
-# Vision Sentiment Page
-elif page == "Vision Sentiment":
+
+def render_vision_sentiment_page():
+    """Render the vision sentiment analysis page."""
     st.title("Vision Sentiment Analysis")
     st.markdown(
         "Analyze the sentiment of your images using our fine-tuned ResNet-50 model."
@@ -1101,7 +390,7 @@ elif page == "Vision Sentiment":
         # File uploader
         uploaded_image = st.file_uploader(
             "Choose an image file",
-            type=["png", "jpg", "jpeg", "bmp", "tiff"],
+            type=SUPPORTED_IMAGE_FORMATS,
             help="Supported formats: PNG, JPG, JPEG, BMP, TIFF",
         )
 
@@ -1115,9 +404,9 @@ elif page == "Vision Sentiment":
             )
 
             # File info
-            file_size = len(uploaded_image.getvalue()) / 1024  # KB
+            file_info = get_file_info(uploaded_image)
             st.info(
-                f"File: {uploaded_image.name} | Size: {file_size:.1f} KB | Dimensions: {image.size[0]}x{image.size[1]}"
+                f"File: {file_info['name']} | Size: {format_file_size(file_info['size_bytes'])} | Dimensions: {image.size[0]}x{image.size[1]}"
             )
 
             # Analyze button
@@ -1140,33 +429,30 @@ elif page == "Vision Sentiment":
                             st.metric("Confidence", f"{confidence:.2f}")
 
                         # Color-coded sentiment display
-                        sentiment_colors = {
-                            "Positive": "🟢",
-                            "Negative": "🔴",
-                            "Neutral": "🟡",
-                        }
+                        sentiment_colors = get_sentiment_colors()
+                        emoji = sentiment_colors.get(sentiment, "❓")
 
                         st.markdown(
                             f"""
-                        <div class="result-box">
-                            <h4>{sentiment_colors.get(sentiment, "❓")} Sentiment: {sentiment}</h4>
-                            <p><strong>Confidence:</strong> {confidence:.2f}</p>
-                            <p><strong>Image File:</strong> {uploaded_image.name}</p>
-                            <p><strong>Model:</strong> ResNet-50 (Fine-tuned on FER2013)</p>
-                        </div>
-                        """,
+                            <div class="result-box">
+                                <h4>{emoji} Sentiment: {sentiment}</h4>
+                                <p><strong>Confidence:</strong> {confidence:.2f}</p>
+                                <p><strong>Image File:</strong> {uploaded_image.name}</p>
+                                <p><strong>Model:</strong> ResNet-50 (Fine-tuned on FER2013)</p>
+                            </div>
+                            """,
                             unsafe_allow_html=True,
                         )
 
     else:  # Camera capture
         st.markdown(
             """
-        <div class="model-card">
-            <h3>Camera Capture</h3>
-            <p>Take a photo directly with your camera to analyze its sentiment.</p>
-            <p><strong>Note:</strong> Make sure your camera is accessible and you have permission to use it.</p>
-        </div>
-        """,
+            <div class="model-card">
+                <h3>Camera Capture</h3>
+                <p>Take a photo directly with your camera to analyze its sentiment.</p>
+                <p><strong>Note:</strong> Make sure your camera is accessible and you have permission to use it.</p>
+            </div>
+            """,
             unsafe_allow_html=True,
         )
 
@@ -1210,21 +496,18 @@ elif page == "Vision Sentiment":
                             st.metric("Confidence", f"{confidence:.2f}")
 
                         # Color-coded sentiment display
-                        sentiment_colors = {
-                            "Positive": "🟢",
-                            "Negative": "🔴",
-                            "Neutral": "🟡",
-                        }
+                        sentiment_colors = get_sentiment_colors()
+                        emoji = sentiment_colors.get(sentiment, "❓")
 
                         st.markdown(
                             f"""
-                        <div class="result-box">
-                            <h4>{sentiment_colors.get(sentiment, "❓")} Sentiment: {sentiment}</h4>
-                            <p><strong>Confidence:</strong> {confidence:.2f}</p>
-                            <p><strong>Image Source:</strong> Camera Capture</p>
-                            <p><strong>Model:</strong> ResNet-50 (Fine-tuned on FER2013)</p>
-                        </div>
-                        """,
+                            <div class="result-box">
+                                <h4>{emoji} Sentiment: {sentiment}</h4>
+                                <p><strong>Confidence:</strong> {confidence:.2f}</p>
+                                <p><strong>Image Source:</strong> Camera Capture</p>
+                                <p><strong>Model:</strong> ResNet-50 (Fine-tuned on FER2013)</p>
+                            </div>
+                            """,
                             unsafe_allow_html=True,
                         )
 
@@ -1234,8 +517,9 @@ elif page == "Vision Sentiment":
     elif input_method == "Take Photo with Camera" and "camera_photo" not in locals():
         st.info("Click the camera button above to take a photo for analysis.")
 
-# Fused Model Page
-elif page == "Fused Model":
+
+def render_fused_model_page():
+    """Render the fused model analysis page."""
     st.title("Fused Model Analysis")
     st.markdown(
         "Combine predictions from all three models for enhanced sentiment analysis."
@@ -1243,12 +527,12 @@ elif page == "Fused Model":
 
     st.markdown(
         """
-    <div class="model-card">
-        <h3>Multi-Modal Sentiment Analysis</h3>
-        <p>This page allows you to input text, audio, and/or image data to get a comprehensive sentiment analysis 
-        using all three models combined.</p>
-    </div>
-    """,
+        <div class="model-card">
+            <h3>Multi-Modal Sentiment Analysis</h3>
+            <p>This page allows you to input text, audio, and/or image data to get a comprehensive sentiment analysis 
+            using all three models combined.</p>
+        </div>
+        """,
         unsafe_allow_html=True,
     )
 
@@ -1282,7 +566,7 @@ elif page == "Fused Model":
         if audio_input_method == "Upload File":
             uploaded_audio = st.file_uploader(
                 "Upload audio file (optional):",
-                type=["wav", "mp3", "m4a", "flac"],
+                type=SUPPORTED_AUDIO_FORMATS,
                 key="fused_audio",
             )
             audio_source = "uploaded_file"
@@ -1325,7 +609,7 @@ elif page == "Fused Model":
         if image_input_method == "Upload File":
             uploaded_image = st.file_uploader(
                 "Upload image file (optional):",
-                type=["png", "jpg", "jpeg", "bmp", "tiff"],
+                type=SUPPORTED_IMAGE_FORMATS,
                 key="fused_image",
             )
 
@@ -1421,16 +705,17 @@ elif page == "Fused Model":
                     st.dataframe(df, use_container_width=True)
 
                 # Final result display
-                sentiment_colors = {"Positive": "🟢", "Negative": "🔴", "Neutral": "🟡"}
+                sentiment_colors = get_sentiment_colors()
+                emoji = sentiment_colors.get(sentiment, "❓")
 
                 st.markdown(
                     f"""
-                <div class="result-box">
-                    <h4>{sentiment_colors.get(sentiment, "❓")} Final Fused Sentiment: {sentiment}</h4>
-                    <p><strong>Overall Confidence:</strong> {confidence:.2f}</p>
-                    <p><strong>Models Used:</strong> {len(results_data)}</p>
-                </div>
-                """,
+                    <div class="result-box">
+                        <h4>{emoji} Final Fused Sentiment: {sentiment}</h4>
+                        <p><strong>Overall Confidence:</strong> {confidence:.2f}</p>
+                        <p><strong>Models Used:</strong> {len(results_data)}</p>
+                    </div>
+                    """,
                     unsafe_allow_html=True,
                 )
         else:
@@ -1438,21 +723,22 @@ elif page == "Fused Model":
                 "Please provide at least one input (text, audio, or image) for fused analysis."
             )
 
-# Max Fusion Page
-elif page == "Max Fusion":
+
+def render_max_fusion_page():
+    """Render the max fusion page for video-based analysis."""
     st.title("Max Fusion - Multi-Modal Sentiment Analysis")
     st.markdown(
         """
-    <div class="model-card">
-        <h3>Ultimate Multi-Modal Sentiment Analysis</h3>
-        <p>Take photos with camera or upload videos to get comprehensive sentiment analysis from multiple modalities:</p>
-        <ul>
-            <li>📸 <strong>Vision Analysis:</strong> Camera photos or video frames for facial expression analysis</li>
-            <li>🎵 <strong>Audio Analysis:</strong> Audio files or extracted audio from videos for vocal sentiment</li>
-            <li>📝 <strong>Text Analysis:</strong> Transcribed audio for text sentiment analysis</li>
-        </ul>
-    </div>
-    """,
+        <div class="model-card">
+            <h3>Ultimate Multi-Modal Sentiment Analysis</h3>
+            <p>Take photos with camera or upload videos to get comprehensive sentiment analysis from multiple modalities:</p>
+            <ul>
+                <li>📸 <strong>Vision Analysis:</strong> Camera photos or video frames for facial expression analysis</li>
+                <li>🎵 <strong>Audio Analysis:</strong> Audio files or extracted audio from videos for vocal sentiment</li>
+                <li>📝 <strong>Text Analysis:</strong> Transcribed audio for text sentiment analysis</li>
+            </ul>
+        </div>
+        """,
         unsafe_allow_html=True,
     )
 
@@ -1476,25 +762,25 @@ elif page == "Max Fusion":
         with col2:
             st.markdown(
                 """
-            <div style="text-align: center; padding: 20px; background: linear-gradient(90deg, #667eea 0%, #764ba2 100%); border-radius: 10px; color: white;">
-                <h3>🚧 Coming Soon 🚧</h3>
-                <p>Video recording feature is under development</p>
-                <p>Use Upload Video File for now!</p>
-            </div>
-            """,
+                <div style="text-align: center; padding: 20px; background: linear-gradient(90deg, #667eea 0%, #764ba2 100%); border-radius: 10px; color: white;">
+                    <h3>🚧 Coming Soon 🚧</h3>
+                    <p>Video recording feature is under development</p>
+                    <p>Use Upload Video File for now!</p>
+                </div>
+                """,
                 unsafe_allow_html=True,
             )
 
         # Placeholder for future recording functionality
         st.markdown(
             """
-        **Future Features:**
-        - Real-time video recording with camera
-        - Audio capture during recording
-        - Automatic frame extraction
-        - Live transcription
-        - WebRTC integration for low-latency streaming
-        """
+            **Future Features:**
+            - Real-time video recording with camera
+            - Audio capture during recording
+            - Automatic frame extraction
+            - Live transcription
+            - WebRTC integration for low-latency streaming
+            """
         )
 
         # Skip all the recording logic for now
@@ -1507,27 +793,25 @@ elif page == "Max Fusion":
         # File upload option
         st.markdown(
             """
-        <div class="upload-section">
-            <h4>📁 Upload Video File</h4>
-            <p>Upload a video file for comprehensive multimodal analysis.</p>
-            <p><strong>Supported Formats:</strong> MP4, AVI, MOV, MKV, WMV, FLV</p>
-            <p><strong>Recommended:</strong> Videos with clear audio and visual content</p>
-        </div>
-        """,
+            <div class="upload-section">
+                <h4>📁 Upload Video File</h4>
+                <p>Upload a video file for comprehensive multimodal analysis.</p>
+                <p><strong>Supported Formats:</strong> MP4, AVI, MOV, MKV, WMV, FLV</p>
+                <p><strong>Recommended:</strong> Videos with clear audio and visual content</p>
+            </div>
+            """,
             unsafe_allow_html=True,
         )
 
         uploaded_video = st.file_uploader(
             "Choose a video file",
-            type=["mp4", "avi", "mov", "mkv", "wmv", "flv"],
+            type=SUPPORTED_VIDEO_FORMATS,
             help="Supported formats: MP4, AVI, MOV, MKV, WMV, FLV",
         )
 
         video_source = "uploaded_file"
         video_name = uploaded_video.name if uploaded_video else None
         video_file = uploaded_video
-
-        # Video recording using streamlit-webrtc component - COMING SOON
 
     if video_file is not None:
         # Display video or photo
@@ -1543,7 +827,7 @@ elif page == "Max Fusion":
 
             uploaded_audio = st.file_uploader(
                 "Upload audio file for audio analysis:",
-                type=["wav", "mp3", "m4a", "flac"],
+                type=SUPPORTED_AUDIO_FORMATS,
                 key="camera_audio",
                 help="Upload an audio file to complement the photo analysis",
             )
@@ -1561,11 +845,10 @@ elif page == "Max Fusion":
         else:
             # For uploaded videos
             st.video(video_file)
-            if hasattr(video_file, "getvalue"):
-                file_size = len(video_file.getvalue()) / 1024  # KB
-            else:
-                file_size = len(video_file) / 1024  # KB
-            st.info(f"File: {video_name} | Size: {file_size:.1f} KB")
+            file_info = get_file_info(video_file)
+            st.info(
+                f"File: {file_info['name']} | Size: {format_file_size(file_info['size_bytes'])}"
+            )
             audio_bytes = None  # Will be extracted from video
 
         # Video Processing Pipeline
@@ -1709,20 +992,17 @@ elif page == "Max Fusion":
                         st.metric("📊 Overall Confidence", f"{confidence:.2f}")
 
                     # Color-coded sentiment display
-                    sentiment_colors = {
-                        "Positive": "🟢",
-                        "Negative": "🔴",
-                        "Neutral": "🟡",
-                    }
+                    sentiment_colors = get_sentiment_colors()
+                    emoji = sentiment_colors.get(sentiment, "❓")
 
                     st.markdown(
                         f"""
-                    <div class="result-box">
-                        <h4>{sentiment_colors.get(sentiment, "❓")} Max Fusion Sentiment: {sentiment}</h4>
-                        <p><strong>Overall Confidence:</strong> {confidence:.2f}</p>
-                        <p><strong>Modalities Analyzed:</strong> {len(results_data)}</p>
-                        <p><strong>Video Source:</strong> {video_name}</p>
-                        <p><strong>Analysis Type:</strong> Comprehensive Multi-Modal Sentiment Analysis</p>
+                        <div class="result-box">
+                            <h4>{emoji} Max Fusion Sentiment: {sentiment}</h4>
+                            <p><strong>Overall Confidence:</strong> {confidence:.2f}</p>
+                            <p><strong>Modalities Analyzed:</strong> {len(results_data)}</p>
+                            <p><strong>Video Source:</strong> {video_name}</p>
+                            <p><strong>Analysis Type:</strong> Comprehensive Multi-Modal Sentiment Analysis</p>
                         </div>
                         """,
                         unsafe_allow_html=True,
@@ -1740,13 +1020,54 @@ elif page == "Max Fusion":
         else:
             st.info("📁 Please upload a video file to begin Max Fusion analysis.")
 
-# Footer
-st.markdown("---")
-st.markdown(
-    """
-<div style="text-align: center; color: #666; padding: 1rem;">
-    <p>Built with ❤️ | by <a href="https://github.com/iamfaham">iamfaham</a></p>
-</div>
-""",
-    unsafe_allow_html=True,
-)
+
+def main():
+    """Main application function."""
+    # Sidebar navigation
+    st.sidebar.title("Sentiment Analysis")
+    st.sidebar.markdown("---")
+
+    # Navigation
+    page = st.sidebar.selectbox(
+        "Choose a page:",
+        [
+            "Home",
+            "Text Sentiment",
+            "Audio Sentiment",
+            "Vision Sentiment",
+            "Fused Model",
+            "Max Fusion",
+        ],
+    )
+
+    # Page routing
+    if page == "Home":
+        render_home_page()
+    elif page == "Text Sentiment":
+        render_text_sentiment_page()
+    elif page == "Audio Sentiment":
+        render_audio_sentiment_page()
+    elif page == "Vision Sentiment":
+        render_vision_sentiment_page()
+    elif page == "Fused Model":
+        render_fused_model_page()
+    elif page == "Max Fusion":
+        render_max_fusion_page()
+
+    # Footer
+    st.markdown("---")
+    st.markdown(
+        """
+        <div style="text-align: center; color: #666; padding: 1rem;">
+            <p>Built with ❤️ | by <a href="https://github.com/iamfaham">iamfaham</a></p>
+            <p>Version: {version}</p>
+        </div>
+        """.format(
+            version=APP_VERSION
+        ),
+        unsafe_allow_html=True,
+    )
+
+
+if __name__ == "__main__":
+    main()

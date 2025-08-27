@@ -7,4 +7,8 @@ requires-python = ">=3.9"
 dependencies = [
     "gdown>=5.2.0",
     "python-dotenv>=1.1.1",
+    "moviepy>=1.0.3",
+    "speechrecognition>=3.10.0",
+    "streamlit-webrtc>=0.47.0",
+    "opencv-python-headless>=4.12.0.88",
 ]

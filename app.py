@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 from torchvision import transforms, models
 import torch.nn.functional as F
+import cv2
 
 # Import the Google Drive model manager
 from simple_model_manager import SimpleModelManager
@@ -520,6 +521,223 @@ def predict_fused_sentiment(text=None, audio_bytes=None, image=None):
     return final_sentiment, avg_confidence
 
 
+def extract_frames_from_video(video_file, max_frames=10):
+    """
+    Extract frames from video file for vision sentiment analysis
+
+    Args:
+        video_file: StreamlitUploadedFile or bytes
+        max_frames: Maximum number of frames to extract
+
+    Returns:
+        List of PIL Image objects
+    """
+    try:
+        import cv2
+        import numpy as np
+        import tempfile
+
+        # Save video bytes to temporary file
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_file:
+            if hasattr(video_file, "getvalue"):
+                tmp_file.write(video_file.getvalue())
+            else:
+                tmp_file.write(video_file)
+            tmp_file_path = tmp_file.name
+
+        try:
+            # Open video with OpenCV
+            cap = cv2.VideoCapture(tmp_file_path)
+
+            if not cap.isOpened():
+                st.error("Could not open video file")
+                return []
+
+            frames = []
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            duration = total_frames / fps if fps > 0 else 0
+
+            st.info(
+                f"📹 Video: {total_frames} frames, {fps:.1f} FPS, {duration:.1f}s duration"
+            )
+
+            # Extract frames at strategic intervals
+            if total_frames > 0:
+                # Select frames: start, 25%, 50%, 75%, end
+                frame_indices = [
+                    0,
+                    int(total_frames * 0.25),
+                    int(total_frames * 0.5),
+                    int(total_frames * 0.75),
+                    total_frames - 1,
+                ]
+                frame_indices = list(set(frame_indices))  # Remove duplicates
+                frame_indices.sort()
+
+                for frame_idx in frame_indices:
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+                    ret, frame = cap.read()
+                    if ret:
+                        # Convert BGR to RGB
+                        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                        # Convert to PIL Image
+                        pil_image = Image.fromarray(frame_rgb)
+                        frames.append(pil_image)
+
+            cap.release()
+            return frames
+
+        finally:
+            # Clean up temporary file
+            os.unlink(tmp_file_path)
+
+    except ImportError:
+        st.error(
+            "OpenCV not installed. Please install it with: pip install opencv-python"
+        )
+        return []
+    except Exception as e:
+        st.error(f"Error extracting frames: {str(e)}")
+        return []
+
+
+def extract_audio_from_video(video_file):
+    """
+    Extract audio from video file for audio sentiment analysis
+
+    Args:
+        video_file: StreamlitUploadedFile or bytes
+
+    Returns:
+        Audio bytes in WAV format
+    """
+    try:
+        import tempfile
+        from moviepy import VideoFileClip
+
+        # Save video bytes to temporary file
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_file:
+            if hasattr(video_file, "getvalue"):
+                tmp_file.write(video_file.getvalue())
+            else:
+                tmp_file.write(video_file)
+            tmp_file_path = tmp_file.name
+
+        try:
+            # Extract audio using moviepy
+            video = VideoFileClip(tmp_file_path)
+            audio = video.audio
+
+            if audio is None:
+                st.warning("No audio track found in video")
+                return None
+
+            # Save audio to temporary WAV file
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as audio_file:
+                audio_path = audio_file.name
+
+            # Export audio as WAV
+            audio.write_audiofile(audio_path, logger=None)
+
+            # Read the audio file and return bytes
+            with open(audio_path, "rb") as f:
+                audio_bytes = f.read()
+
+            # Clean up temporary audio file
+            try:
+                os.unlink(audio_path)
+            except (OSError, PermissionError):
+                # File might be in use, skip cleanup
+                pass
+
+            return audio_bytes
+
+        finally:
+            # Clean up temporary video file
+            try:
+                # Close video and audio objects first
+                if "video" in locals():
+                    video.close()
+                if "audio" in locals() and audio:
+                    audio.close()
+
+                # Wait a bit before trying to delete
+                import time
+
+                time.sleep(0.1)
+
+                os.unlink(tmp_file_path)
+            except (OSError, PermissionError):
+                # File might be in use, skip cleanup
+                pass
+
+    except ImportError:
+        st.error("MoviePy not installed. Please install it with: pip install moviepy")
+        return None
+    except Exception as e:
+        st.error(f"Error extracting audio: {str(e)}")
+        return None
+
+
+def transcribe_audio(audio_bytes):
+    """
+    Transcribe audio to text for text sentiment analysis
+
+    Args:
+        audio_bytes: Audio bytes in WAV format
+
+    Returns:
+        Transcribed text string
+    """
+    if audio_bytes is None:
+        return ""
+
+    try:
+        import tempfile
+        import speech_recognition as sr
+
+        # Save audio bytes to temporary file
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
+            tmp_file.write(audio_bytes)
+            tmp_file_path = tmp_file.name
+
+        try:
+            # Initialize recognizer
+            recognizer = sr.Recognizer()
+
+            # Load audio file
+            with sr.AudioFile(tmp_file_path) as source:
+                # Read audio data
+                audio_data = recognizer.record(source)
+
+                # Transcribe using Google Speech Recognition
+                try:
+                    text = recognizer.recognize_google(audio_data)
+                    return text
+                except sr.UnknownValueError:
+                    st.warning("Speech could not be understood")
+                    return ""
+                except sr.RequestError as e:
+                    st.error(
+                        f"Could not request results from speech recognition service: {e}"
+                    )
+                    return ""
+
+        finally:
+            # Clean up temporary file
+            os.unlink(tmp_file_path)
+
+    except ImportError:
+        st.error(
+            "SpeechRecognition not installed. Please install it with: pip install SpeechRecognition"
+        )
+        return ""
+    except Exception as e:
+        st.error(f"Error transcribing audio: {str(e)}")
+        return ""
+
+
 # Sidebar navigation
 st.sidebar.title("Sentiment Analysis")
 st.sidebar.markdown("---")
@@ -533,6 +751,7 @@ page = st.sidebar.selectbox(
         "Audio Sentiment",
         "Vision Sentiment",
         "Fused Model",
+        "Max Fusion",
     ],
 )
 
@@ -620,6 +839,23 @@ if page == "Home":
             <li>Multi-modal input processing</li>
             <li>Ensemble prediction strategies</li>
             <li>Comprehensive sentiment analysis</li>
+        </ul>
+    </div>
+    """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        """
+    <div class="model-card">
+        <h3>🎬 Max Fusion</h3>
+        <p>Ultimate video-based sentiment analysis combining all three modalities</p>
+        <ul>
+            <li>🎥 Record or upload 5-second videos</li>
+            <li>🔍 Extract frames for vision analysis</li>
+            <li>🎵 Extract audio for vocal sentiment</li>
+            <li>📝 Transcribe audio for text analysis</li>
+            <li>🚀 Comprehensive multi-modal results</li>
         </ul>
     </div>
     """,
@@ -1194,6 +1430,308 @@ elif page == "Fused Model":
             st.warning(
                 "Please provide at least one input (text, audio, or image) for fused analysis."
             )
+
+# Max Fusion Page
+elif page == "Max Fusion":
+    st.title("Max Fusion - Multi-Modal Sentiment Analysis")
+    st.markdown(
+        """
+    <div class="model-card">
+        <h3>Ultimate Multi-Modal Sentiment Analysis</h3>
+        <p>Take photos with camera or upload videos to get comprehensive sentiment analysis from multiple modalities:</p>
+        <ul>
+            <li>📸 <strong>Vision Analysis:</strong> Camera photos or video frames for facial expression analysis</li>
+            <li>🎵 <strong>Audio Analysis:</strong> Audio files or extracted audio from videos for vocal sentiment</li>
+            <li>📝 <strong>Text Analysis:</strong> Transcribed audio for text sentiment analysis</li>
+        </ul>
+    </div>
+    """,
+        unsafe_allow_html=True,
+    )
+
+    # Video input method selection
+    st.subheader("Video Input")
+    video_input_method = st.radio(
+        "Choose input method:",
+        ["Upload Video File", "Record Video (Coming Soon)"],
+        horizontal=True,
+        index=0,  # Default to upload video
+    )
+
+    if video_input_method == "Record Video (Coming Soon)":
+        # Coming Soon message for video recording
+        st.info("🎥 Video recording feature is coming soon!")
+        st.info("📁 Please use the Upload Video File option for now.")
+
+        # Show a nice coming soon message
+        st.markdown("---")
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            st.markdown(
+                """
+            <div style="text-align: center; padding: 20px; background: linear-gradient(90deg, #667eea 0%, #764ba2 100%); border-radius: 10px; color: white;">
+                <h3>🚧 Coming Soon 🚧</h3>
+                <p>Video recording feature is under development</p>
+                <p>Use Upload Video File for now!</p>
+            </div>
+            """,
+                unsafe_allow_html=True,
+            )
+
+        # Placeholder for future recording functionality
+        st.markdown(
+            """
+        **Future Features:**
+        - Real-time video recording with camera
+        - Audio capture during recording
+        - Automatic frame extraction
+        - Live transcription
+        - WebRTC integration for low-latency streaming
+        """
+        )
+
+        # Skip all the recording logic for now
+        uploaded_video = None
+        video_source = None
+        video_name = None
+        video_file = None
+
+    elif video_input_method == "Upload Video File":
+        # File upload option
+        st.markdown(
+            """
+        <div class="upload-section">
+            <h4>📁 Upload Video File</h4>
+            <p>Upload a video file for comprehensive multimodal analysis.</p>
+            <p><strong>Supported Formats:</strong> MP4, AVI, MOV, MKV, WMV, FLV</p>
+            <p><strong>Recommended:</strong> Videos with clear audio and visual content</p>
+        </div>
+        """,
+            unsafe_allow_html=True,
+        )
+
+        uploaded_video = st.file_uploader(
+            "Choose a video file",
+            type=["mp4", "avi", "mov", "mkv", "wmv", "flv"],
+            help="Supported formats: MP4, AVI, MOV, MKV, WMV, FLV",
+        )
+
+        video_source = "uploaded_file"
+        video_name = uploaded_video.name if uploaded_video else None
+        video_file = uploaded_video
+
+        # Video recording using streamlit-webrtc component - COMING SOON
+
+    if video_file is not None:
+        # Display video or photo
+        if video_source == "camera_photo":
+            # For camera photos, we already displayed the image above
+            st.info(f"Source: Camera Photo | Ready for vision analysis")
+
+            # Add audio upload option for camera photo mode
+            st.subheader("🎵 Audio Input for Analysis")
+            st.info(
+                "Since we're using a photo, please upload an audio file for audio sentiment analysis:"
+            )
+
+            uploaded_audio = st.file_uploader(
+                "Upload audio file for audio analysis:",
+                type=["wav", "mp3", "m4a", "flac"],
+                key="camera_audio",
+                help="Upload an audio file to complement the photo analysis",
+            )
+
+            if uploaded_audio:
+                st.audio(
+                    uploaded_audio, format=f'audio/{uploaded_audio.name.split(".")[-1]}'
+                )
+                st.success("✅ Audio uploaded successfully!")
+                audio_bytes = uploaded_audio.getvalue()
+            else:
+                audio_bytes = None
+                st.warning("⚠️ Please upload an audio file for complete analysis")
+
+        else:
+            # For uploaded videos
+            st.video(video_file)
+            if hasattr(video_file, "getvalue"):
+                file_size = len(video_file.getvalue()) / 1024  # KB
+            else:
+                file_size = len(video_file) / 1024  # KB
+            st.info(f"File: {video_name} | Size: {file_size:.1f} KB")
+            audio_bytes = None  # Will be extracted from video
+
+        # Video Processing Pipeline
+        st.subheader("🎬 Video Processing Pipeline")
+
+        # Initialize variables
+        frames = []
+        audio_bytes = None
+        transcribed_text = ""
+
+        # Process uploaded video
+        if uploaded_video:
+            st.info("📁 Processing uploaded video file...")
+
+            # Extract frames
+            st.markdown("**1. 🎥 Frame Extraction**")
+            frames = extract_frames_from_video(uploaded_video, max_frames=5)
+
+            if frames:
+                st.success(f"✅ Extracted {len(frames)} representative frames")
+
+                # Display extracted frames
+                cols = st.columns(len(frames))
+                for i, frame in enumerate(frames):
+                    with cols[i]:
+                        st.image(
+                            frame, caption=f"Frame {i+1}", use_container_width=True
+                        )
+            else:
+                st.warning("⚠️ Could not extract frames from video")
+                frames = []
+
+            # Extract audio
+            st.markdown("**2. 🎵 Audio Extraction**")
+            audio_bytes = extract_audio_from_video(uploaded_video)
+
+            if audio_bytes:
+                st.success("✅ Audio extracted successfully")
+                st.audio(audio_bytes, format="audio/wav")
+            else:
+                st.warning("⚠️ Could not extract audio from video")
+                audio_bytes = None
+
+            # Transcribe audio
+            st.markdown("**3. 📝 Audio Transcription**")
+            if audio_bytes:
+                transcribed_text = transcribe_audio(audio_bytes)
+                if transcribed_text:
+                    st.success("✅ Audio transcribed successfully")
+                    st.markdown(f'**Transcribed Text:** "{transcribed_text}"')
+                else:
+                    st.warning("⚠️ Could not transcribe audio")
+                    transcribed_text = ""
+            else:
+                transcribed_text = ""
+                st.info("ℹ️ No audio available for transcription")
+
+        # Analysis button
+        if st.button(
+            "🚀 Run Max Fusion Analysis", type="primary", use_container_width=True
+        ):
+            with st.spinner(
+                "🔄 Processing video and running comprehensive analysis..."
+            ):
+                # Run individual analyses
+                st.subheader("🔍 Individual Model Analysis")
+
+                results_data = []
+
+                # Vision analysis (use first frame for uploaded videos)
+                if frames:
+                    st.markdown("**Vision Analysis:**")
+
+                    # For uploaded videos, use first frame
+                    vision_sentiment, vision_conf = predict_vision_sentiment(
+                        frames[0], crop_tightness=0.0
+                    )
+                    results_data.append(
+                        {
+                            "Model": "Vision (ResNet-50)",
+                            "Input": f"Video Frame 1",
+                            "Sentiment": vision_sentiment,
+                            "Confidence": f"{vision_conf:.2f}",
+                        }
+                    )
+                    st.success(
+                        f"Vision: {vision_sentiment} (Confidence: {vision_conf:.2f})"
+                    )
+
+                # Audio analysis
+                if audio_bytes:
+                    st.markdown("**Audio Analysis:**")
+                    audio_sentiment, audio_conf = predict_audio_sentiment(audio_bytes)
+                    results_data.append(
+                        {
+                            "Model": "Audio (Wav2Vec2)",
+                            "Input": f"Video Audio",
+                            "Sentiment": audio_sentiment,
+                            "Confidence": f"{audio_conf:.2f}",
+                        }
+                    )
+                    st.success(
+                        f"Audio: {audio_sentiment} (Confidence: {audio_conf:.2f})"
+                    )
+
+                # Text analysis
+                if transcribed_text:
+                    st.markdown("**Text Analysis:**")
+                    text_sentiment, text_conf = predict_text_sentiment(transcribed_text)
+                    results_data.append(
+                        {
+                            "Model": "Text (TextBlob)",
+                            "Input": f"Transcribed: {transcribed_text[:50]}...",
+                            "Sentiment": text_sentiment,
+                            "Confidence": f"{text_conf:.2f}",
+                        }
+                    )
+                    st.success(f"Text: {text_sentiment} (Confidence: {text_conf:.2f})")
+
+                # Run fused analysis
+                st.subheader("🎯 Max Fusion Results")
+
+                if results_data:
+                    # Display results table
+                    df = pd.DataFrame(results_data)
+                    st.dataframe(df, use_container_width=True)
+
+                    # Calculate fused sentiment
+                    image_for_fusion = frames[0] if frames else None
+                    sentiment, confidence = predict_fused_sentiment(
+                        text=transcribed_text if transcribed_text else None,
+                        audio_bytes=audio_bytes,
+                        image=image_for_fusion,
+                    )
+
+                    # Display final results
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric("🎯 Final Sentiment", sentiment)
+                    with col2:
+                        st.metric("📊 Overall Confidence", f"{confidence:.2f}")
+
+                    # Color-coded sentiment display
+                    sentiment_colors = {
+                        "Positive": "🟢",
+                        "Negative": "🔴",
+                        "Neutral": "🟡",
+                    }
+
+                    st.markdown(
+                        f"""
+                    <div class="result-box">
+                        <h4>{sentiment_colors.get(sentiment, "❓")} Max Fusion Sentiment: {sentiment}</h4>
+                        <p><strong>Overall Confidence:</strong> {confidence:.2f}</p>
+                        <p><strong>Modalities Analyzed:</strong> {len(results_data)}</p>
+                        <p><strong>Video Source:</strong> {video_name}</p>
+                        <p><strong>Analysis Type:</strong> Comprehensive Multi-Modal Sentiment Analysis</p>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.error(
+                        "❌ No analysis could be performed. Please check your video input."
+                    )
+
+    else:
+        if video_input_method == "Record Video (Coming Soon)":
+            st.info(
+                "🎥 Video recording feature is coming soon! Please use Upload Video File for now."
+            )
+        else:
+            st.info("📁 Please upload a video file to begin Max Fusion analysis.")
 
 # Footer
 st.markdown("---")

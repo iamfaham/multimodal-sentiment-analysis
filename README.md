@@ -52,6 +52,18 @@ This project implements a **fused sentiment analysis system** that combines pred
 - **Capability**: Provides comprehensive sentiment analysis across modalities
 - **Status**: ✅ Fully integrated and ready to use
 
+### 5. 🎬 Max Fusion
+
+- **Approach**: Video-based comprehensive sentiment analysis
+- **Capability**: Analyzes 5-second videos by extracting frames, audio, and transcribing speech
+- **Features**:
+  - Video recording or file upload (MP4, AVI, MOV, MKV, WMV, FLV)
+  - Automatic frame extraction for vision analysis
+  - Audio extraction for vocal sentiment analysis
+  - Speech-to-text transcription for text sentiment analysis
+  - Combined results from all three modalities
+- **Status**: ✅ Fully integrated and ready to use
+
 ## Project Structure
 
 ```
@@ -134,6 +146,7 @@ sentiment-fused/
    - 🎵 **Audio Sentiment**: Analyze audio files or record with microphone
    - 🖼️ **Vision Sentiment**: Analyze images or capture with camera
    - 🔗 **Fused Model**: Combine all three models
+   - 🎬 **Max Fusion**: Video-based comprehensive analysis
 
 ## Model Development
 
@@ -238,6 +251,8 @@ Key libraries used:
 - **Librosa**: Audio processing
 - **TextBlob**: Natural language processing
 - **Gdown**: Google Drive file downloader
+- **MoviePy**: Video processing and audio extraction
+- **SpeechRecognition**: Audio transcription
 
 ## What This Project Demonstrates
 
@@ -247,5 +262,7 @@ Key libraries used:
 4. **Smart Preprocessing**: Automatic format conversion and optimization
 5. **Modern Web UI**: Professional Streamlit application with custom styling
 6. **Production Ready**: Docker containerization and deployment
+7. **Video Analysis**: Comprehensive video processing with multi-modal extraction
+8. **Speech Recognition**: Audio-to-text transcription for enhanced analysis
 
 This project serves as a comprehensive example of building production-ready multimodal AI applications with modern Python tools and frameworks.

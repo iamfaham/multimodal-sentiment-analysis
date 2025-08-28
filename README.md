@@ -85,14 +85,6 @@ sentiment-fused/
     └── ui/                       # User interface components
 ```
 
-### Directory Explanation
-
-- **`model_weights/`**: Contains the actual trained model files (`.pth` files) downloaded from Google Drive at inference time.
-- **`src/models/`**: Contains the Python code for model loading, inference, and prediction logic
-- **`src/utils/`**: Contains preprocessing utilities for audio, vision, and text data
-- **`src/config/`**: Contains centralized configuration settings for the entire application
-- **`src/ui/`**: Contains Streamlit UI components and styling
-
 ## Key Features
 
 - **Real-time Analysis**: Instant sentiment predictions with confidence scores

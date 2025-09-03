@@ -14,7 +14,6 @@ pinned: false
 A comprehensive Streamlit application that combines three different sentiment analysis models: text, audio, and vision-based sentiment analysis. The project demonstrates how to integrate multiple AI models for comprehensive sentiment understanding across different modalities.
 
 ![Demo GIF](https://github.com/user-attachments/assets/ac6ed8dc-e225-44a8-a6f1-c2d6b318adf4)
-![Demo in better quality](https://github.com/user-attachments/assets/188083e1-d745-4ac5-a8a3-ea1b61889b04)
 
 ## What is it?
 

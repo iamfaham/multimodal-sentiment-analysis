@@ -15,6 +15,10 @@ A comprehensive Streamlit application that combines three different sentiment an
 
 ![Demo](https://github.com/user-attachments/assets/188083e1-d745-4ac5-a8a3-ea1b61889b04)
 
+<video width="640" height="360" controls>
+  <source src="https://github.com/user-attachments/assets/188083e1-d745-4ac5-a8a3-ea1b61889b04" type="video/mp4">
+</video>
+
 ## What is it?
 
 This project implements a **fused sentiment analysis system** that combines predictions from three independent models:

@@ -13,6 +13,8 @@ pinned: false
 
 A comprehensive Streamlit application that combines three different sentiment analysis models: text, audio, and vision-based sentiment analysis. The project demonstrates how to integrate multiple AI models for comprehensive sentiment understanding across different modalities.
 
+![Demo](https://user-images.githubusercontent.com/.../video.mp4)
+
 ## What is it?
 
 This project implements a **fused sentiment analysis system** that combines predictions from three independent models:
@@ -200,7 +202,11 @@ The project includes Jupyter notebooks that document the development process:
 docker build -t sentiment-fused .
 
 # Run the container
-docker run -p 7860:7860 sentiment-fused
+doc
+
+Uploading multimodal-sentiment-analysis-video-demo.mp4…
+
+ker run -p 7860:7860 sentiment-fused
 ```
 
 The application will be available at `http://localhost:7860`
